@@ -1,0 +1,55 @@
+---
+# One node, all settings used
+
+nodes:
+  - hypervisor:
+      node: bighypervisor # required
+      storage_images: local-lvm # required
+      storage_iso: local # required
+      storage_import: local # required
+      startup_config: order=4,up=90 # optional
+      network: vmbr2 # required
+      iso_name: FluxLive-1747905921.iso # required
+      start_on_creation: true # default false
+      vm_name: barbados # required
+      node_tier: stratus # required
+      disk_limit: 180 # optional
+      cpu_limit: 0.8 # optional
+      network_limit: 18 # optional
+    installer_config: # optional
+      auto_reboot: true # default true
+      reboot_to_firmware: false # default false
+      reboot_to_boot_menu: false # default false
+    network: # optional
+      ip_allocation: static # default dhcp, optional
+      address_config: # optional
+        address: 192.168.44.13/24 # required
+        gateway: 192.168.44.1 # required
+        dns: # required
+          - 8.8.8.8
+          - 1.1.1.1
+    system: # required
+      hostname: barbados # required
+      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICSorp1RcdDK0qqDm/jr/5EXtkny/s9H+2vq1fgbqU9+ operator@fluxnode # optional
+      keyboard: # optional
+        layout: us # this is the default
+        variant: ""
+    metrics_app_settings: # optional
+        poweroff_screen: 10 # 0 10 20 30 60
+        theme: gruvbox
+    fluxnode: # required
+      notifications: # optional
+        discord:
+          user_id: '321487457843565639'
+          webhook_url: https://discord.com/api/webhooks/1380482660937498686/4_fEVl_gYoLcp8gt-WcsCqvizrb9BPMOk40d-N6LIQmDkv4-KoBRE8iX0YsMbtWoGzmM
+      network: # optional
+        router_address: 192.168.44.1 # required if UPnP
+        local_chain_sources: # optional (but you probably want these)
+        - 192.168.44.10:16197
+        - 192.168.44.11:16187
+        upnp_port: 16167 # required if UPnP
+      identity: # required
+        flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
+        identity_key: 5yJDb3QtTrfaghDghJKcSmhBqy6AaJAxyxk6QH8SgNW5p3RtenV
+        output_id: 0
+        tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba

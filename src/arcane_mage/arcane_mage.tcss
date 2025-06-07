@@ -1,0 +1,302 @@
+.text-label {
+  height: 3;
+  content-align: center middle;
+}
+
+.icon-button {
+    margin-left: 1;
+    max-width: 7;
+}
+
+WelcomeScreen {
+    align: center middle;
+
+    &> Container {
+        width: 80%;
+        height: 80%;
+        border: solid $primary;
+        align: center middle;
+
+        &> Vertical {
+            width: 1fr;
+            align: center middle;
+
+            &> Label {
+                width: auto;
+            }
+        }
+
+        &> Horizontal {
+            width: 1fr;
+            align: center middle;
+
+            &> .action-button {
+                margin: 1;
+                padding: 1 2;
+            }
+        }
+    }
+}
+
+WelcomeScreenProxmox {
+    &> Container {
+        border: solid $primary;
+        &> Grid {
+            margin-top: 1;
+            height: 3;
+            grid-size: 3;
+
+            &> #first-column {
+                &> #back {
+                    color: green;
+                    margin: 0 1;
+                }
+
+                &> Button {
+                    max-width: 7;
+                    margin: 0 1;
+                }
+            }
+
+            &> #third-column {
+                align: right middle;
+                &> #exit {
+                    color: red;
+                    margin: 0 1;
+                }
+            }
+        }
+
+        &> Vertical {
+            align: center middle;
+            &> #dialog {
+                border: solid $primary;
+            }
+            &> #dt-container {
+                width: auto;
+                height: auto;
+
+                &> DataTable {
+                    border-title-align: center;
+                    border-title-color: $foreground;
+                    border-title-style: bold;
+                    border: solid $primary;
+                    width: auto;
+                    padding: 1 2;
+                }
+
+                &> Horizontal {
+                    margin: 1;
+                    height: auto;
+                    width: 100%;
+                    align: center middle;
+
+                    &> Input {
+                        width: 11;
+                        margin-right: 2;
+                    }
+                }
+            }
+        }
+    }
+}
+
+AddHypervisorScreen {
+    align: center middle;
+
+    &> Container {
+        border: solid $primary;
+        border-title-align: center;
+        border-title-color: $foreground;
+
+        width: 70%;
+        height: 80%;
+
+        &> Grid {
+            margin: 1;
+            grid-size: 2;
+            grid-columns: 12 1fr;
+            height: auto;
+            grid-gutter: 1;
+
+            &> Input {
+                width: 1fr;
+            }
+
+            &> Label {
+                text-align: right;
+                width: 1fr;
+            }
+
+            &> Horizontal {
+                column-span: 2;
+                height: auto;
+                align: center middle;
+
+                &> Button {
+                    margin: 0 2;
+                }
+            }
+        }
+
+        &> Vertical {
+            #info-label {
+                height: 1fr;
+                width: 1fr;
+                content-align: center bottom;
+                text-align: center;
+
+                &.--info-error {
+                    color: red;
+                }
+
+                &.--info-success {
+                    color: green;
+                }
+            }
+
+            &> Horizontal {
+                align: center middle;
+
+                &> Button {
+                    margin: 1;
+                }
+            }
+        }
+
+    }
+}
+
+
+ProvisionNodeScreen {
+    align: center middle;
+
+    &> Container {
+        border: solid $primary;
+        border-title-align: center;
+        border-title-color: $foreground;
+
+        width: 80%;
+        height: auto;
+
+        &> Markdown {
+           padding: 1 1 0 1;
+           background: $background;
+        }
+
+        &> #console-container {
+            height: auto;
+            margin: 0 1 1 1;
+
+            &> Input {
+                width: 1fr;
+            }
+        }
+
+        &> #error-label {
+            color: red;
+            text-align: center;
+            width: 1fr;
+        }
+
+        &> #button-container {
+            align: center middle;
+            height: auto;
+            margin-top: 2;
+
+            &> Button {
+                margin: 0 2;
+            }
+        }
+    }
+}
+
+
+ProvisioningInfoScreen {
+    align: center middle;
+
+    &> Container {
+        width: 60%;
+        height: auto;
+        border: solid $primary;
+        border-title-align: center;
+        border-title-color: $foreground;
+        border-title-style: bold;
+        align: center middle;
+        padding: 1;
+
+        &> Container {
+            width: 1fr;
+            height: auto;
+            align: center middle;
+
+            &> Vertical {
+                padding: 1 2;
+                height: auto;
+                width: auto;
+
+                &> Label {
+                    width: 100%;
+                    content-align: center middle;
+                }
+
+                &> Horizontal {
+                    height: auto;
+                    width: auto;
+                    &> Spinner {
+                        width: 1;
+                        margin-right: 2;
+                    }
+                }
+            }
+        }
+
+        &> #error-label {
+            color: red;
+            width: 1fr;
+            content-align: center middle;
+
+        }
+
+        &> #button-container {
+            margin-top: 1;
+            width: 1fr;
+            height: auto;
+            align: center middle;
+        }
+
+        &> #wait-container {
+            margin-top: 1;
+            width: 1fr;
+            height: auto;
+            align: center middle;
+        }
+    }
+}
+
+ConfirmScreen {
+  align: center middle;
+  &> Container {
+    width: 60%;
+    height: 40%;
+    max-height: 14;
+    border: solid $primary;
+
+    &> Label {
+      width: 1fr;
+      height: 2fr;
+      content-align: center middle;
+      text-align: center;
+    }
+
+    &> Horizontal {
+      align: center middle;
+      height: 1fr;
+      width: 1fr;
+
+      &> Button {
+        margin: 0 1;
+      }
+    }
+  }
+}

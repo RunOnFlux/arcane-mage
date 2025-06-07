@@ -1,0 +1,119 @@
+---
+# 3 node set up using Merge Anchors. Mix of Static and DHCP, all UPnP
+
+# Info on Merge anchors: https://yaml.org/type/merge.html
+
+# We use the global key to house our Anchors
+global:
+  hypervisor: &hypervisor
+    node: bighypervisor
+    storage_images: local-lvm
+    storage_iso: local
+    storage_import: local
+    network: vmbr2
+    iso_name: FluxLive-1747905921.iso
+    start_on_creation: true
+  address_config: &address_config
+    gateway: 192.168.44.1
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+  fluxnode_network: &fluxnode_network
+    router_address: 192.168.44.1
+    local_chain_sources:
+    - 192.168.44.10:16197
+    - 192.168.44.11:16187
+  system: &system
+    ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICSorp1RcdDK0qqDm/jr/5EXtkny/s9H+2vq1fgbqU9+ operator@fluxnode
+    keyboard:
+      layout: us
+      variant: ""
+  installer: &installer
+    auto_reboot: true
+  fluxnode: &fluxnode
+    notifications:
+      discord:
+        user_id: '321487457843565639'
+        webhook_url: https://discord.com/api/webhooks/1380482660937498686/4_fEVl_gYoLcp8gt-WcsCqvizrb9BPMOk40d-N6LIQmDkv4-KoBRE8iX0YsMbtWoGzmM
+  metrics_app_settings: &metrics_app_settings
+      poweroff_screen: 0
+      theme: gruvbox
+  identity: &fluxnode_identity
+    flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
+    identity_key: 5yJDb3QtTrfaghDghJKcSmhBqy6AaJAxyxk6QH8SgNW5p3RtenV
+    output_id: 0
+# We then use our Anchors to substitute values in our nodes, so we don't repeat ourselves
+nodes:
+  - hypervisor:
+      <<: *hypervisor
+      disk_limit: 180
+      cpu_limit: 0.8
+      network_limit: 18
+      vm_name: chinchilla
+      node_tier: cumulus
+    installer:
+      <<: *installer
+    network:
+      ip_allocation: static
+      address_config:
+        address: 192.168.44.12/24
+        <<: *address_config
+    system:
+      hostname: chinchilla
+      <<: *system
+    metrics_app: *metrics_app_settings
+    fluxnode:
+      <<: *fluxnode
+      network:
+        <<: *fluxnode_network
+        router_address: 192.168.44.1
+        upnp_port: 16167
+      identity:
+        <<: *fluxnode_identity
+        tx_id: c071995e761cc2afcc65f9db35119aebf890834156afd21c4b248c0913b64087
+  - hypervisor:
+      <<: *hypervisor
+      vm_name: sideshowbob
+      node_tier: nimbus
+    installer:
+      <<: *installer
+    network:
+      ip_allocation: static
+      address_config:
+        address: 192.168.44.13/24
+        <<: *address_config
+    system:
+      hostname: sideshowbob
+      <<: *system
+    metrics_app: *metrics_app_settings
+    fluxnode:
+      <<: *fluxnode
+      network:
+        <<: *fluxnode_network
+        upnp_enabled: true
+        upnp_port: 16177
+      identity:
+        <<: *fluxnode_identity
+        tx_id: 110a9dbf77bc62d43c9c8dae7160b19ec77f6225ddda4cd539e4a24c6703d2ab
+  - hypervisor:
+      <<: *hypervisor
+      vm_name: mrburns
+      node_tier: stratus
+    installer:
+      <<: *installer
+    network:
+      ip_allocation: dynamic
+    system:
+      hostname: mrburns
+      <<: *system
+    fluxnode:
+      <<: *fluxnode
+      network:
+        <<: *fluxnode_network
+        upnp_enabled: true
+        upnp_port: 16187
+      identity:
+        <<: *fluxnode_identity
+        tx_id: a5a9cd5677371cba05a6b9b94d5fa42ac8650dee0ce3c50f12d77c93dc799ac0
+        # global keys are overrideable
+        output_id: 2

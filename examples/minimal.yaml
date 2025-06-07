@@ -1,0 +1,20 @@
+---
+# DHCP, Autoboot, no UPnP, no Notifications, No Local chain sources
+nodes:
+  - hypervisor:
+      node: gruntbox
+      storage_images: local-lvm
+      storage_iso: local
+      storage_import: local
+      network: vmbr2
+      iso_name: FluxLive-1749291196.iso
+      vm_name: graham
+      node_tier: cumulus
+    system:
+      hostname: graham
+    fluxnode:
+      identity:
+        flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
+        identity_key: L4yreKb7oFfok5i38Zi5DZo7vA7wdjrGhs8gdPqNNxdsuNBaywcR
+        output_id: 0
+        tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba
