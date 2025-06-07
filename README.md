@@ -34,12 +34,6 @@ Install as a tool:
 uv tool install arcane-mage
 ```
 
-Now you can just run arcane-mage directly:
-
-```bash
-arcane-mage --help
-```
-
 To use the default config file `fluxnodes.yaml` in the directory you are in (this will run the GUI):
 
 ```bash
