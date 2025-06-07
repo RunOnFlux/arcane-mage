@@ -238,11 +238,9 @@ class WelcomeScreenProxmox(Screen):
         )
         first_time_dialog.display = False
 
-        dt_container = Vertical(id="dt-container")
-        dt_container.display = False
-
         fluxnode_dt: DataTable = DataTable(cursor_type="row")
         fluxnode_dt.border_title = "Fluxnodes"
+        fluxnode_dt.display = False
 
         yield Header(show_clock=True)
         with Container():
@@ -799,11 +797,11 @@ class WelcomeScreenProxmox(Screen):
             return
 
         try:
-            container = self.query_one("#dt-container", Vertical)
+            table = self.query_one(DataTable)
         except NoMatches:
             return
 
-        container.display = new
+        table.display = new
 
     def watch_first_time(self, old: bool, new: bool) -> None:
         if old == new:

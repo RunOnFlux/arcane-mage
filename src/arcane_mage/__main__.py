@@ -1,6 +1,6 @@
 import click
 
-from arcane_mage.arcane_mage import ArcaneMage
+from .arcane_mage import ArcaneMage
 
 
 @click.group(invoke_without_command=True)
