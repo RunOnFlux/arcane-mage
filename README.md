@@ -7,7 +7,7 @@ Arcane Mage is a suite of tools designed to ease the installation (and configura
 The following is available via the GUI, or CLI:
 
 * Fully automated A to Z Proxmox installs, including Secure Boot key enrollment.
-* Mutlicast config broadcast on LANs - fully automated installs, except Secure Boot Key enrollemnt.
+* Mutlicast config broadcast on LANs - fully automated installs, except Secure Boot Key enrollement.
 * USB stick creation for plug and play automated installs on bare metal
 
 ### Configuration Options
