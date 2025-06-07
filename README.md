@@ -49,7 +49,7 @@ arcane-mage
 Run the following for help:
 
 ```bash
-uvx -m arcane-mage --help
+arcane-mage --help
 ```
 
 ### Hypervisor Setup - Proxmox Automation
