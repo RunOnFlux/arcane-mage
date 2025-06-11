@@ -88,6 +88,26 @@ class WelcomeScreenProxmox(Screen):
 
     proxmox_api: ProxmoxApi
 
+    @staticmethod
+    def is_api_min_version(version: str) -> bool:
+        MIN_VERSION = [8, 4, 1]
+
+        parts = version.split(":")
+
+        if not len(parts) == 3:
+            return False
+
+        for minimum_str, actual in zip(parts, MIN_VERSION):
+            try:
+                minimum = int(minimum_str)
+            except ValueError:
+                return False
+
+            if actual < minimum:
+                return False
+
+        return True
+
     def __init__(
         self,
         hypervisors: list[HypervisorConfig],
@@ -360,13 +380,29 @@ class WelcomeScreenProxmox(Screen):
 
         self.post_message(WelcomeScreenProxmox.ProvisionNode(fluxnode))
 
+    async def validate_api_version(self, node: str) -> tuple[bool, str]:
+        res = await self.proxmox_api.get_api_version(node)
+
+        if not res:
+            return False, "Unable to get Proxmox api version"
+
+        version = res.payload.get("version")
+
+        if not version:
+            return False, "Api payload missing version info"
+
+        if not self.is_api_min_version(version):
+            return False, f"Api version too old. Got: {version}, Want: 8.4.1"
+
+        return True, ""
+
     async def validate_storage(
         self,
         node: str,
         storage_iso: str,
         storage_images: str,
         storage_import: str,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, str]:
         res = await self.proxmox_api.get_storage_state(node)
 
         if not res:
@@ -439,7 +475,7 @@ class WelcomeScreenProxmox(Screen):
         #     ]
         # }
 
-        return True, None
+        return True, ""
 
     async def validate_iso_version(
         self, node: str, iso_name: str, storage_iso: str
@@ -508,6 +544,14 @@ class WelcomeScreenProxmox(Screen):
         if hv.node_tier not in WelcomeScreenProxmox.config_tier_map:
             callback(False, f"Node tier: {hv.node_tier} does not exist")
             return False
+
+        version_valid, version_error = await self.validate_api_version(hv.node)
+
+        if not version_valid:
+            callback(False, version_error)
+            return False
+
+        callback(True, "Api version validated")
 
         storage_valid, storage_error = await self.validate_storage(
             hv.node, hv.storage_iso, hv.storage_images, hv.storage_import

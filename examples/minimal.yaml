@@ -2,11 +2,11 @@
 # DHCP, Autoboot, no UPnP, no Notifications, No Local chain sources
 nodes:
   - hypervisor:
-      node: gruntbox
+      node: bigchug
       storage_images: local-lvm
       storage_iso: local
       storage_import: local
-      network: vmbr2
+      network: vmbr0
       iso_name: FluxLive-1749291196.iso
       vm_name: graham
       node_tier: cumulus

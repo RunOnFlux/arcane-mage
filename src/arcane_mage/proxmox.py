@@ -56,9 +56,6 @@ class ProxmoxApi:
         except ClientError:
             return None
 
-        print("ME PAYLOAD", payload)
-        print("RES HERE", res)
-
         try:
             res.raise_for_status()
         except ClientResponseError:
@@ -84,8 +81,6 @@ class ProxmoxApi:
 
         if not csrf:
             return None
-
-        print("TICKET STUFF", ticket, csrf)
 
         client = cls.build_password_client(url, ticket, csrf)
 
@@ -238,6 +233,11 @@ class ProxmoxApi:
         data = await self.do_http("delete", path)
 
         return data
+
+    async def get_api_version(self, node: str) -> ApiResponse:
+        res = await self.do_get(f"nodes/{node}/version")
+
+        return res
 
     async def get_cluster_nodes(self) -> ApiResponse:
         res = await self.do_get("cluster/config/nodes")

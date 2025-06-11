@@ -78,7 +78,7 @@ class ArcaneMage(App):
             return None
 
         vm_name = fluxnode.hypervisor.vm_name
-        total_steps = 8 if fluxnode.hypervisor.start_on_creation else 7
+        total_steps = 9 if fluxnode.hypervisor.start_on_creation else 8
         info_screen = ProvisioningInfoScreen(
             vm_name=vm_name, total_steps=total_steps
         )
