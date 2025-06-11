@@ -92,7 +92,7 @@ class WelcomeScreenProxmox(Screen):
     def is_api_min_version(version: str) -> bool:
         MIN_VERSION = [8, 4, 1]
 
-        parts = version.split(":")
+        parts = version.split(".")
 
         if not len(parts) == 3:
             return False

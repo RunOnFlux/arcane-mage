@@ -1408,9 +1408,6 @@ class ArcaneOsConfigGroup:
 
         return cls.from_dict(config_raw)
 
-    def to_dict(self) -> dict:
-        return {"nodes": [x.to_dict() for x in self.nodes]}
-
     @property
     def first(self) -> ArcaneOsConfig | None:
         return self.nodes[0] if self.nodes else None
@@ -1423,8 +1420,14 @@ class ArcaneOsConfigGroup:
     def last(self) -> ArcaneOsConfig | None:
         return self.nodes[-1] if self.nodes else None
 
+    def __len__(self) -> int:
+        return len(self.nodes)
+
     def __iter__(self) -> Iterator[ArcaneOsConfig]:
         yield from self.nodes
+
+    def to_dict(self) -> dict:
+        return {"nodes": [x.to_dict() for x in self.nodes]}
 
     def get_node_by_vm_name(
         self, node_name: str, vm_name: str
@@ -1458,7 +1461,6 @@ class ArcaneOsConfigGroup:
 
 
 if __name__ == "__main__":
-
     address_config: AddressConfig | None = None
     conf = NetworkConfig(
         ip_allocation="static",

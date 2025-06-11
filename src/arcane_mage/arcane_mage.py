@@ -71,7 +71,7 @@ class ArcaneMage(App):
         screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
         screen.validate_hypervisors()
 
-    def provision_node_callback(
+    async def provision_node_callback(
         self, fluxnode: ArcaneOsConfig | None, delete_efi: bool = True
     ) -> Worker | None:
         if not fluxnode or not fluxnode.hypervisor:
@@ -82,7 +82,10 @@ class ArcaneMage(App):
         info_screen = ProvisioningInfoScreen(
             vm_name=vm_name, total_steps=total_steps
         )
-        self.push_screen(info_screen)
+
+        # this is a bit rugged
+        mounted = self.push_screen(info_screen)
+        await mounted
 
         screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
         worker = screen.provision_node(
@@ -166,7 +169,7 @@ class ArcaneMage(App):
 
         hashed_password = configured_node.system.hashed_console
 
-        worker = self.provision_node_callback(configured_node)
+        worker = await self.provision_node_callback(configured_node)
 
         if not worker:
             return
@@ -176,7 +179,7 @@ class ArcaneMage(App):
         if not result:
             return
 
-        needs_pop = True
+        needs_pop = len(provisionable_nodes) > 1
 
         if delay and not configured_node == provisionable_nodes.last:
             worker = self.screen.show_delay(delay)
@@ -198,7 +201,9 @@ class ArcaneMage(App):
 
             last = fluxnode == provisionable_nodes.last
 
-            worker = self.provision_node_callback(fluxnode, delete_efi=last)
+            worker = await self.provision_node_callback(
+                fluxnode, delete_efi=last
+            )
 
             if not worker:
                 break
