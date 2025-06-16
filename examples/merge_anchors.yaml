@@ -20,7 +20,7 @@ global:
       - 1.1.1.1
   fluxnode_network: &fluxnode_network
     router_address: 192.168.44.1
-    local_chain_sources:
+    private_chain_sources:
     - 192.168.44.10:16197
     - 192.168.44.11:16187
   system: &system

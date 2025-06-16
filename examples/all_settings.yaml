@@ -43,13 +43,17 @@ nodes:
           user_id: '321487457843565639'
           webhook_url: https://discord.com/api/webhooks/1380482660937498686/4_fEVl_gYoLcp8gt-WcsCqvizrb9BPMOk40d-N6LIQmDkv4-KoBRE8iX0YsMbtWoGzmM
       network: # optional
+        upnp_port: 16167 # required if UPnP
         router_address: 192.168.44.1 # required if UPnP
-        local_chain_sources: # optional (but you probably want these)
+        private_chain_sources: # optional - this is handy if you don't have UPnP but
+        # have a local chain. MUST be private addresses or they will be skipped
         - 192.168.44.10:16197
         - 192.168.44.11:16187
-        upnp_port: 16167 # required if UPnP
       identity: # required
         flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
         identity_key: 5yJDb3QtTrfaghDghJKcSmhBqy6AaJAxyxk6QH8SgNW5p3RtenV
         output_id: 0
         tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba
+      gravity:
+        blocked_ports: [7777]
+        blocked_repositories: ["nasty/repo:latest"]

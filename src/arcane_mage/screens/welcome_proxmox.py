@@ -797,7 +797,9 @@ class WelcomeScreenProxmox(Screen):
 
         vm_id: int = vm_id_res.payload
 
-        write_limit = f"mbps_wr={disk_limit}," if disk_limit else ""
+        disk_rate = (
+            f"mbps_rd={disk_limit},mbps_wr={disk_limit}," if disk_limit else ""
+        )
         cpu_limit = cpu_limit or 0
 
         smbios_uuid = str(uuid.uuid4())
@@ -821,7 +823,7 @@ class WelcomeScreenProxmox(Screen):
             "cores": tier_config["cpu_cores"],
             "cpulimit": cpu_limit,
             "bios": "ovmf",
-            "scsi0": f"{storage_images}:{tier_config['scsi_gb']},{write_limit}discard=on,iothread=1,ssd=1",
+            "scsi0": f"{storage_images}:{tier_config['scsi_gb']},{disk_rate}discard=on,iothread=1,ssd=1",
             "scsi1": f"{storage_images}:0,import-from={storage_import}:import/{config_img}",
             "ide2": f"{storage_iso}:iso/{iso_name},media=cdrom",
             "net0": f"model=virtio,bridge={network_bridge}",

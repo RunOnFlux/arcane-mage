@@ -955,10 +955,10 @@ class GravityConfig:
         items: dict = {}
 
         for prop, ui_prop in cls.ui_property_map.items():
-            key = prop if ui else ui_prop
+            key = ui_prop if ui else prop
             value = data.get(key, None)
 
-            if value:
+            if value is not None:
                 items[prop] = value
 
         return cls(**items)
@@ -986,15 +986,15 @@ class GravityConfig:
 class FluxnodeNetworkConfig:
     upnp_port: int | None = None
     router_address: str | None = None
-    local_chain_sources: list[str] = Field(default_factory=list)
+    private_chain_sources: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> FluxnodeNetworkConfig:
         props = {}
         for _field in fields(cls):
-            value = data.get(_field.name)
+            value = data.get(_field.name, None)
 
-            if value:
+            if value is not None:
                 props[_field.name] = value
 
         return cls(**props)
@@ -1015,11 +1015,33 @@ class FluxnodeNetworkConfig:
         return props
 
     async def write_installer_config(self, file_path: Path) -> bool:
+        # we let the configure app set the local chain sources
+        ip_pattern = r"^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$"
+        port_pattern = r"^(?:6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3})(?:\s?,\s?(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))*$"
+
+        filtered_chain_sources = []
+
+        for chain_source in self.private_chain_sources:
+            try:
+                ip, port = chain_source.split(":")
+            except ValueError:
+                continue
+
+            if not re.match(ip_pattern, ip) or not re.match(port_pattern, port):
+                continue
+
+            if not IPv4Address(ip).is_private:
+                continue
+
+            filtered_chain_sources.append(chain_source)
+
         config = {
             "network": {
                 "upnp_enabled": self.upnp_enabled,
                 "upnp_port": self.upnp_port,
-                "local_chain_sources": self.local_chain_sources,
+                "local_chain_sources": [],
+                "local_chain_timestamp": 0,
+                "private_chain_sources": filtered_chain_sources,
                 "router_address": self.router_address,
             }
         }
@@ -1173,7 +1195,7 @@ class Hypervisor:
     def from_dict(cls, data: dict) -> Hypervisor:
         props = {}
         for _field in fields(cls):
-            value = data.get(_field.name)
+            value = data.get(_field.name, None)
 
             if value is not None:
                 props[_field.name] = value
@@ -1201,9 +1223,9 @@ class InstallerConfig:
     def from_dict(cls, data: dict) -> InstallerConfig:
         props = {}
         for _field in fields(cls):
-            value = data.get(_field.name)
+            value = data.get(_field.name, None)
 
-            if value:
+            if value is not None:
                 props[_field.name] = value
 
         return cls(**props)
@@ -1228,9 +1250,9 @@ class MetricsAppConfig:
     def from_dict(cls, data: dict) -> MetricsAppConfig:
         props = {}
         for _field in fields(cls):
-            value = data.get(_field.name)
+            value = data.get(_field.name, None)
 
-            if value:
+            if value is not None:
                 props[_field.name] = value
 
         return cls(**props)
@@ -1329,9 +1351,9 @@ class ArcaneOsConfig:
         props = {}
 
         for _field in fields(self):
-            value = getattr(self, _field.name)
+            value = getattr(self, _field.name, None)
 
-            if value:
+            if value is not None:
                 props[_field.name] = value.to_dict()
 
         return props
@@ -1461,20 +1483,31 @@ class ArcaneOsConfigGroup:
 
 
 if __name__ == "__main__":
-    address_config: AddressConfig | None = None
-    conf = NetworkConfig(
-        ip_allocation="static",
-        address_config=AddressConfig(
-            address=IPv4Interface("192.168.44.14/24"),
-            gateway=IPv4Address("192.16.44.1"),
-            dns=["1.1.1.1", "5.5.5.5"],
-        ),
-    )
+    import asyncio
+    from rich.pretty import pprint
+    # address_config: AddressConfig | None = None
+    # conf = NetworkConfig(
+    #     ip_allocation="static",
+    #     address_config=AddressConfig(
+    #         address=IPv4Interface("192.168.44.14/24"),
+    #         gateway=IPv4Address("192.16.44.1"),
+    #         dns=["1.1.1.1", "5.5.5.5"],
+    #     ),
+    # )
 
-    configs: list[tuple[str, SystemdConfigParser]] = conf.systemd_ini_configs(
-        "ens44"
-    )
+    # configs: list[tuple[str, SystemdConfigParser]] = conf.systemd_ini_configs(
+    #     "ens44"
+    # )
 
-    for filename, config in configs:
-        with open(filename, "w") as fd:
-            config.write(fd, space_around_delimiters=False)
+    # for filename, config in configs:
+    #     with open(filename, "w") as fd:
+    #         config.write(fd, space_around_delimiters=False)
+
+    async def main():
+        config = ArcaneOsConfigGroup.from_fs(Path("dev/minimal.yaml"))
+
+        pprint(config)
+
+        await config.nodes[0].write_user_config("testing123.yaml")
+
+    asyncio.run(main())
