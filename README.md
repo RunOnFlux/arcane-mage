@@ -2,6 +2,8 @@
 
 ### Introduction
 
+This is experimental software. There may be rough edges. If you spot something that is not quite right - please open an issue.
+
 Arcane Mage is a suite of tools designed to ease the installation (and configuration) burden of installing a Fluxnode.
 
 The following is available via the GUI, or CLI:
