@@ -1039,8 +1039,6 @@ class FluxnodeNetworkConfig:
             "network": {
                 "upnp_enabled": self.upnp_enabled,
                 "upnp_port": self.upnp_port,
-                "local_chain_sources": [],
-                "local_chain_timestamp": 0,
                 "private_chain_sources": filtered_chain_sources,
                 "router_address": self.router_address,
             }
