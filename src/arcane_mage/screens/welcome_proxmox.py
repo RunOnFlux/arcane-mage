@@ -626,6 +626,9 @@ class WelcomeScreenProxmox(Screen):
         print("CREATED OK", created_ok)
 
         if not created_ok:
+            await self.delete_install_disks(
+                vm_id, hv.node, hv.storage_import, delete_efi
+            )
             callback(False, "Unable to create VM on hypervisor")
             return False
 
@@ -831,7 +834,7 @@ class WelcomeScreenProxmox(Screen):
         }
 
         if startup_config:
-            config["starup"] = startup_config
+            config["startup"] = startup_config
 
         return config
 
