@@ -6,6 +6,7 @@ nodes:
       storage_images: local-lvm
       storage_iso: local
       storage_import: local
+      start_on_creation: true
       network: vmbr0
       iso_name: FluxLive-1749291196.iso
       vm_name: graham

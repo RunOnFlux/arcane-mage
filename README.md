@@ -81,4 +81,8 @@ Finally, give **BOTH** your user and api token `PVEAdmin` permissions:
 
 ![Proxmox Permissions ](proxmox_permissions.png)
 
+**A note on using the `startup_config` parameter**
+
+Setting a startup config for a node requires elevated permissions that the `PVEAdmin` role does not cover. The easiest way to resolve this is to create a role, I.e. `UserAdminSysModiy` with the `Sys.Modify` permission on the `/` path. You need to give this extra role to BOTH the api user and token.
+
 You're now good to run Arcane Mage.

@@ -6,7 +6,7 @@ nodes:
       storage_images: local-lvm # required
       storage_iso: local # required
       storage_import: local # required
-      startup_config: order=4,up=90 # optional
+      startup_config: order=4,up=360 # optional
       network: vmbr2 # required
       iso_name: FluxLive-1747905921.iso # required
       start_on_creation: true # default false
