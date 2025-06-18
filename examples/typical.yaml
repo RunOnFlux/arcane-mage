@@ -1,0 +1,36 @@
+---
+# Static IP, Autoboot, Autostart, UPnP, Discord notifications
+nodes:
+  - hypervisor:
+      node: bigchug
+      storage_images: local-lvm
+      storage_iso: local
+      storage_import: local
+      network: vmbr0
+      iso_name: FluxLive-1749291196.iso
+      vm_name: graham
+      node_tier: cumulus
+    system:
+      hostname: graham
+      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICSorp1RcdDK0qqDm/jr/5EXtkny/s9H+2vq1fgbqU9+ operator@fluxnode # optional
+    network:
+      ip_allocation: static
+      address_config:
+        address: 192.168.44.13/24
+        gateway: 192.168.44.1
+        dns:
+          - 8.8.8.8
+          - 1.1.1.1
+    fluxnode:
+      identity:
+        flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
+        identity_key: L4yreKb7oFfok5i38Zi5DZo7vA7wdjrGhs8gdPqNNxdsuNBaywcR
+        output_id: 0
+        tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba
+      network:
+        upnp_port: 16167
+        router_address: 192.168.44.1
+      notifications:
+          discord:
+            user_id: '321487457843565639'
+            webhook_url: https://discord.com/api/webhooks/1380482660937498686/4_fEVl_gYoLcp8gt-WcsCqvizrb9BPMOk40d-N6LIQmDkv4-KoBRE8iX0YsMbtWoGzmM

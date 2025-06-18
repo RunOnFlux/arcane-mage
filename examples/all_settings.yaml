@@ -1,6 +1,5 @@
 ---
 # One node, all settings used
-
 nodes:
   - hypervisor:
       node: bighypervisor # required
@@ -13,7 +12,7 @@ nodes:
       start_on_creation: true # default false
       vm_name: barbados # required
       node_tier: stratus # required
-      disk_limit: 180 # optional
+      disk_limit: 200 # optional
       cpu_limit: 0.8 # optional
       network_limit: 18 # optional
     installer_config: # optional

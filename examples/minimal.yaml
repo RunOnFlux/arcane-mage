@@ -1,5 +1,5 @@
 ---
-# DHCP, Autoboot, no UPnP, no Notifications, No Local chain sources
+# DHCP, Autoboot, no autostart, no UPnP, no Notifications, No private chain sources
 nodes:
   - hypervisor:
       node: bigchug
