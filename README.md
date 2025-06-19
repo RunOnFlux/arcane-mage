@@ -85,4 +85,10 @@ Finally, give **BOTH** your user and api token `PVEAdmin` permissions:
 
 Setting a startup config for a node requires elevated permissions that the `PVEAdmin` role does not cover. The easiest way to resolve this is to create a role, I.e. `UserAdminSysModiy` with the `Sys.Modify` permission on the `/` path. You need to give this extra role to BOTH the api user and token.
 
+**A note on API authentication and key storage**
+
+Arcane mage uses your systems secure keyring to store api keys / passwords. For macOS this is `keychain` (tested) and windows `Windows Credential Locker` (untested)
+
+If your system doesn't have a keyring backend, see [here](https://github.com/jaraco/keyring) for details on resolving that.
+
 You're now good to run Arcane Mage.
