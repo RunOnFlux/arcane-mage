@@ -171,8 +171,6 @@ async def do_http(
                     if verb == "head":
                         return resp.headers
 
-                    print(await resp.read())
-
                     try:
                         res = await resp.json()
                     except (
