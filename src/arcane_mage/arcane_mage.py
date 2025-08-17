@@ -105,7 +105,7 @@ class ArcaneMage(App):
                 self.config.hypervisors, self.fluxnodes
             )
             self.install_screen(screen, name="welcome-proxmox")
-        else:
+        elif event.screen != "welcome-proxmox":
             self.notify("Not implemented yet")
             return
 

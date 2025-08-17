@@ -97,13 +97,13 @@ class WelcomeScreenProxmox(Screen):
         if not len(parts) == 3:
             return False
 
-        for minimum_str, actual in zip(parts, MIN_VERSION):
+        for actual_str, required in zip(parts, MIN_VERSION):
             try:
-                minimum = int(minimum_str)
+                actual = int(actual_str)
             except ValueError:
                 return False
 
-            if actual < minimum:
+            if actual < required:
                 return False
 
         return True
