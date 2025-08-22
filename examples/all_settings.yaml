@@ -11,6 +11,7 @@ nodes:
       iso_name: FluxLive-1747905921.iso # required
       start_on_creation: true # default false
       vm_name: barbados # required
+      vm_id: 107 # optional. Will use next available id if not present
       node_tier: stratus # required
       disk_limit: 200 # optional
       cpu_limit: 0.8 # optional

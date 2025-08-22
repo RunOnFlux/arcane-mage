@@ -207,6 +207,8 @@ class ProxmoxApi:
             res = await method(path, ssl=False, data=data)
         except ConnectionTimeoutError:
             return ApiResponse(timed_out=True)
+        except ClientError:
+            return ApiResponse(error="Connection Error")
 
         data = await self.handle_api_response(res)
 

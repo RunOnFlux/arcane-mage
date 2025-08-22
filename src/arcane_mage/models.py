@@ -1183,6 +1183,7 @@ class Hypervisor:
     storage_images: str = "local-lvm"
     storage_iso: str = "local"
     storage_import: str = "local"
+    vm_id: int | None = None
     startup_config: str | None = None
     disk_limit: int | None = None
     cpu_limit: float | None = None

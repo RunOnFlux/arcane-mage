@@ -189,8 +189,10 @@ class WelcomeScreenProxmox(Screen):
         if not hyper_nodes:
             self.build_fluxnode_table(useable_nodes, provisioned)
             self.hypervisor_populated = True
+            msg = "Timeout" if hyper_nodes.timed_out else hyper_nodes.error
             self.notify(
-                "Error getting Hypervisor nodes via api", severity="error"
+                f"Error getting Hypervisor nodes via api: {msg}",
+                severity="error",
             )
             return
 
@@ -408,6 +410,12 @@ class WelcomeScreenProxmox(Screen):
         if not res:
             return False, "Unable to get Proxmox storage state"
 
+        if not res.payload:
+            return (
+                False,
+                "No Storage state available, did you forget API permissions?",
+            )
+
         node_storage_iso = next(
             filter(lambda x: x.get("storage") == storage_iso, res.payload), None
         )
@@ -583,6 +591,7 @@ class WelcomeScreenProxmox(Screen):
 
         vm_config = await self.create_vm_config(
             vm_name=hv.vm_name,
+            vm_id=hv.vm_id,
             tier=hv.node_tier,
             network_bridge=hv.network,
             iso_name=hv.iso_name,
@@ -783,6 +792,7 @@ class WelcomeScreenProxmox(Screen):
         storage_images: str = "local-lvm",
         storage_iso: str = "local",
         storage_import: str = "local",
+        vm_id: int | None = None,
         iso_name: str | None = None,
         startup_config: str | None = None,
         disk_limit: int | None = None,
@@ -793,12 +803,15 @@ class WelcomeScreenProxmox(Screen):
         if not tier_config:
             return None
 
-        vm_id_res = await self.proxmox_api.get_next_id()
+        if vm_id is None:
+            vm_id_res = await self.proxmox_api.get_next_id()
 
-        if not vm_id_res:
-            return None
+            if not vm_id_res:
+                return None
 
-        vm_id: int = vm_id_res.payload
+            vm_id = vm_id_res.payload
+
+            assert vm_id
 
         disk_rate = (
             f"mbps_rd={disk_limit},mbps_wr={disk_limit}," if disk_limit else ""
