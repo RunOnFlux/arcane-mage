@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import importlib.resources as resources
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -69,12 +71,11 @@ class WelcomeScreenProxmox(Screen):
     hypervisor_populated = var(False)
     display_table = var(False)
 
-    base_image_path = Path("images")
+    _images_ref = resources.files("arcane_mage.images")
 
-    efi_gz_path = base_image_path / "arcane_efi.raw.gz"
-    efi_path = efi_gz_path.with_suffix("")
-
-    config_image_gz_path = base_image_path / "arcane_config.raw.gz"
+    # References to compressed images in package
+    efi_gz_resource = _images_ref / "arcane_efi.raw.gz"
+    config_gz_resource = _images_ref / "arcane_config.raw.gz"
     config_image_base = "arcane_config"
 
     # The config location on the fluxnode
@@ -678,21 +679,6 @@ class WelcomeScreenProxmox(Screen):
     def get_vm_config_file_name(self, vm_id: int) -> str:
         return f"{vm_id}_{self.config_image_base}.raw"
 
-    def create_config_image(self, config: bytes, vm_id: int) -> Path:
-        config_image_name = self.get_vm_config_file_name(vm_id)
-        config_image_path = self.base_image_path / config_image_name
-
-        with open(config_image_path, "wb") as img_fh:
-            with open(self.config_image_gz_path, "rb") as img_gz_fh:
-                img_fh.write(gzip.decompress(img_gz_fh.read()))
-
-        fat_fs = fs.open_fs(f"fat://{config_image_path}")
-
-        with fat_fs.openbin(str(self.config_file_path), mode="wb") as conf_fh:
-            conf_fh.write(config)
-
-        return config_image_path
-
     async def start_vm(self, vm_id: int, node: str) -> bool:
         res = await self.proxmox_api.start_vm(vm_id, node)
 
@@ -748,14 +734,14 @@ class WelcomeScreenProxmox(Screen):
         return config_ok
 
     async def upload_arcane_efi(self, node: str, storage: str) -> bool:
-        with open(self.efi_gz_path, "rb") as f:
+        with self.efi_gz_resource.open("rb") as f:
             efi_disk = gzip.decompress(f.read())
 
         upload_res = await self.proxmox_api.upload_file(
             efi_disk,
             node=node,
             storage=storage,
-            file_name=str(self.efi_path.name),
+            file_name="arcane_efi.raw",
         )
 
         if not upload_res:
@@ -768,16 +754,28 @@ class WelcomeScreenProxmox(Screen):
     async def upload_arcane_config(
         self, config: bytes, vm_id: int, node: str, storage: str
     ) -> bool:
-        config_image_path = self.create_config_image(config, vm_id)
+        with tempfile.TemporaryDirectory(prefix="arcane_mage_") as tmpdir:
+            config_image_name = self.get_vm_config_file_name(vm_id)
+            config_image_path = Path(tmpdir) / config_image_name
 
-        try:
+            # Extract and decompress the config image template
+            with config_image_path.open("wb") as img_fh:
+                with self.config_gz_resource.open("rb") as img_gz_fh:
+                    img_fh.write(gzip.decompress(img_gz_fh.read()))
+
+            # Modify the FAT filesystem to add the config
+            fat_fs = fs.open_fs(f"fat://{config_image_path}")
+            with fat_fs.openbin(
+                str(self.config_file_path), mode="wb"
+            ) as conf_fh:
+                conf_fh.write(config)
+
+            # Upload the modified image
             upload_res = await self.proxmox_api.upload_file(
                 config_image_path,
                 node=node,
                 storage=storage,
             )
-        finally:
-            config_image_path.unlink()
 
         if not upload_res:
             return False

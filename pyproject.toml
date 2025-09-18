@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "David White", email = "david@runonflux.io" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12.0"
 dependencies = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.11.18",
@@ -30,6 +30,14 @@ arcane-mage = "arcane_mage.__main__:cli"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "src/arcane_mage/**/*.py",
+    "src/arcane_mage/**/*.gz",
+    "src/arcane_mage/**/*.tcss",
+    "src/arcane_mage/py.typed",
+]
 
 [dependency-groups]
 dev = [

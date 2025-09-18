@@ -1,0 +1,1 @@
+# Images package for arcane_mage
