@@ -1,6 +1,6 @@
 [project]
 name = "arcane-mage"
-version = "0.3.0"
+version = "0.3.1"
 description = "Automation helper for Fluxnodes"
 readme = "README.md"
 authors = [
@@ -31,13 +31,8 @@ arcane-mage = "arcane_mage.__main__:cli"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build]
-include = [
-    "src/arcane_mage/**/*.py",
-    "src/arcane_mage/**/*.gz",
-    "src/arcane_mage/**/*.tcss",
-    "src/arcane_mage/py.typed",
-]
+[tool.hatch.build.targets.wheel]
+packages = ["src/arcane_mage"]
 
 [dependency-groups]
 dev = [
