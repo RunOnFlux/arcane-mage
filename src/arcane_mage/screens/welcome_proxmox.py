@@ -103,7 +103,9 @@ class WelcomeScreenProxmox(Screen):
             except ValueError:
                 return False
 
-            if actual < required:
+            if actual > required:
+                return True
+            elif actual < required:
                 return False
 
         return True
