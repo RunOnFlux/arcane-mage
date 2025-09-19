@@ -20,7 +20,7 @@ import yaml
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Horizontal, Vertical
-from textual.dom import NoMatches
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import var
 from textual.screen import Screen
@@ -43,6 +43,7 @@ from ..messages import (
 )
 from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from ..proxmox import ProxmoxApi
+from ..log import log
 
 
 class WelcomeScreenProxmox(Screen):
@@ -693,6 +694,7 @@ class WelcomeScreenProxmox(Screen):
         create_res = await self.proxmox_api.create_vm(config, node)
 
         if not create_res:
+            log.error(create_res)
             return False
 
         ok = await self.proxmox_api.wait_for_task(create_res.payload, node)
