@@ -16,7 +16,7 @@ nodes:
       disk_limit: 200 # optional
       cpu_limit: 0.8 # optional
       network_limit: 18 # optional
-    installer_config: # optional
+    installer: # optional
       auto_reboot: true # default true
       reboot_to_firmware: false # default false
       reboot_to_boot_menu: false # default false
