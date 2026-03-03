@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 from ast import literal_eval
 from configparser import ConfigParser
@@ -18,8 +19,9 @@ from uuid import uuid4
 import aiofiles
 import keyring
 import keyring.errors
+import pyrage
 import yaml
-from pydantic import EmailStr, field_validator
+from pydantic import EmailStr, field_validator, model_validator
 from pydantic.dataclasses import Field
 from pydantic.dataclasses import dataclass as py_dataclass
 from pydantic.networks import HttpUrl
@@ -736,14 +738,11 @@ class DiscordNotification:
         return cls(*items)
 
     def to_dict(self) -> dict:
-        props = {}
-
-        for _field in fields(self):
-            value = getattr(self, _field.name)
-
-            props[_field.name] = value
-
-        return props
+        return {
+            _field.name: getattr(self, _field.name)
+            for _field in fields(self)
+            if getattr(self, _field.name) is not None
+        }
 
     @property
     def watchdog_dict(self) -> dict:
@@ -804,14 +803,11 @@ class TelegramNotification:
         }
 
     def to_dict(self) -> dict:
-        props = {}
-
-        for _field in fields(self):
-            value = getattr(self, _field.name)
-
-            props[_field.name] = value
-
-        return props
+        return {
+            _field.name: getattr(self, _field.name)
+            for _field in fields(self)
+            if getattr(self, _field.name) is not None
+        }
 
     @property
     def ui_dict(self) -> dict:
@@ -886,7 +882,9 @@ class Notifications:
             value = getattr(self, _field.name)
 
             if hasattr(value, "to_dict"):
-                props[_field.name] = value.to_dict()
+                sub = value.to_dict()
+                if sub:
+                    props[_field.name] = sub
             elif value:
                 props[_field.name] = value
 
@@ -906,62 +904,115 @@ class Notifications:
 
 
 @py_dataclass
-class GravityConfig:
-    ui_property_map: ClassVar[dict] = {
-        "blocked_ports": "blockedPorts",
-        "blocked_repositories": "blockedRepositories",
-    }
+class Delegate:
+    """Delegate node starting configuration.
 
-    debug: bool = False
-    development: bool = False
-    testnet: bool = False
-    blocked_ports: list[int] = Field(default_factory=list)
-    blocked_repositories: list[str] = Field(default_factory=list)
+    Accepts either a pre-encrypted key (delegate_private_key_encrypted) or
+    a raw WIF key + passphrase (delegate_private_key, delegate_passphrase)
+    which will be encrypted with pyrage on output.
+    """
 
-    asdict
+    COMPRESSED_PUBKEY_PATTERN: ClassVar[str] = r"^(02|03)[0-9a-fA-F]{64}$"
+    WIF_PATTERN: ClassVar[str] = r"^[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}$"
 
-    @field_validator("blocked_ports", mode="before")
+    collateral_pubkey: str | None = None
+    # Pre-encrypted key (pass through directly)
+    delegate_private_key_encrypted: str | None = None
+    # Raw key + passphrase (arcane-mage encrypts on output)
+    delegate_private_key: str | None = None
+    delegate_passphrase: str | None = None
+
+    @field_validator("collateral_pubkey", mode="after")
     @classmethod
-    def validate_blocked_ports(cls, value: list[int | str]) -> list[int]:
-        # ToDo: figure how to do this as a field
+    def validate_collateral_pubkey(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
 
-        as_int = []
+        if not re.match(cls.COMPRESSED_PUBKEY_PATTERN, value):
+            raise ValueError(
+                "Collateral pubkey must be 66 hex chars with 02/03 prefix"
+            )
 
-        pattern = r"^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+        return value.lower()
 
-        for port in value:
-            if not re.search(pattern, str(port)):
-                raise ValueError(f"Port: {port} must be in the range 0-65535")
-
-            as_int.append(int(port))
-
-        return as_int
-
-    @field_validator("blocked_repositories", mode="before")
+    @field_validator("delegate_private_key", mode="after")
     @classmethod
-    def validate_blocked_repositories(cls, value: list) -> list:
-        # ToDo: figure how to do this as a field
+    def validate_delegate_private_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
 
-        pattern = r"^(?:(?:(?:(?:[\w-]+(?:\.[\w-]+)+)(?::\d+)?)|[\w]+:\d+)\/)?\/?(?:(?:(?:[a-z0-9]+(?:(?:[._]|__|[-]*)[a-z0-9]+)*)\/){0,2})(?:[a-z0-9-_.]+\/{0,1}[a-z0-9-_.]+)[:]?(?:[\w][\w.-]{0,127})?$"
-
-        for repo in value:
-            if not re.search(pattern, repo):
-                raise ValueError(f"Repository: {repo} must be a valid format")
+        if not re.match(cls.WIF_PATTERN, value):
+            raise ValueError("Delegate private key must be a valid WIF key")
 
         return value
 
+    @model_validator(mode="after")
+    def validate_key_config(self) -> Delegate:
+        if self.delegate_private_key and not self.delegate_passphrase:
+            raise ValueError(
+                "delegate_passphrase is required when delegate_private_key is provided"
+            )
+
+        has_encrypted = self.delegate_private_key_encrypted is not None
+        has_raw = self.delegate_private_key is not None
+        if has_encrypted and has_raw:
+            raise ValueError(
+                "Provide either delegate_private_key_encrypted or "
+                "delegate_private_key + delegate_passphrase, not both"
+            )
+
+        return self
+
     @classmethod
-    def from_dict(cls, data: dict, ui: bool = False) -> GravityConfig:
-        items: dict = {}
+    def from_dict(cls, data: dict) -> Delegate:
+        return cls(
+            collateral_pubkey=data.get("collateral_pubkey"),
+            delegate_private_key_encrypted=data.get(
+                "delegate_private_key_encrypted"
+            ),
+            delegate_private_key=data.get("delegate_private_key"),
+            delegate_passphrase=data.get("delegate_passphrase"),
+        )
 
-        for prop, ui_prop in cls.ui_property_map.items():
-            key = ui_prop if ui else prop
-            value = data.get(key, None)
+    def to_output_dict(self) -> dict:
+        """Produce the output dict matching flux_config_shared's Delegate schema.
 
-            if value is not None:
-                items[prop] = value
+        If a raw key + passphrase were provided, encrypts the key with pyrage.
+        Only outputs delegate_private_key_encrypted and collateral_pubkey.
+        """
+        encrypted = self.delegate_private_key_encrypted
 
-        return cls(**items)
+        if self.delegate_private_key and self.delegate_passphrase:
+            encrypted_bytes = pyrage.passphrase.encrypt(
+                self.delegate_private_key.encode("utf-8"),
+                self.delegate_passphrase,
+            )
+            encrypted = base64.b64encode(encrypted_bytes).decode("utf-8")
+
+        result = {}
+        if encrypted is not None:
+            result["delegate_private_key_encrypted"] = encrypted
+        if self.collateral_pubkey is not None:
+            result["collateral_pubkey"] = self.collateral_pubkey
+
+        return result
+
+
+@py_dataclass
+class GravityConfig:
+    debug: bool = False
+    development: bool = False
+    testnet: bool = False
+
+    asdict
+
+    @classmethod
+    def from_dict(cls, data: dict) -> GravityConfig:
+        return cls(
+            debug=data.get("debug", False),
+            development=data.get("development", False),
+            testnet=data.get("testnet", False),
+        )
 
     def to_dict(self) -> dict:
         props = {}
@@ -973,13 +1024,6 @@ class GravityConfig:
                 props[_field.name] = value
 
         return props
-
-    def to_ui_dict(self) -> dict:
-        return {
-            self.ui_property_map[field.name]: getattr(self, field.name)
-            for field in fields(self)
-            if field.name in self.ui_property_map
-        }
 
 
 @py_dataclass
@@ -1066,6 +1110,7 @@ class FluxnodeConfig:
         default_factory=FluxnodeNetworkConfig
     )
     notifications: Notifications = Field(default_factory=Notifications)
+    delegate: Delegate | None = None
 
     @staticmethod
     def remove_none_factory(data: list[tuple[str, Any]]):
@@ -1077,6 +1122,7 @@ class FluxnodeConfig:
         notifications_raw: dict | None = params.get("notifications")
         gravity_raw: dict | None = params.get("gravity")
         network_raw: dict | None = params.get("network")
+        delegate_raw: dict | None = params.get("delegate")
 
         if not identity_raw:
             raise ValueError("Fluxnode identity missing")
@@ -1097,8 +1143,13 @@ class FluxnodeConfig:
             if network_raw
             else FluxnodeNetworkConfig()
         )
+        delegate = (
+            Delegate.from_dict(delegate_raw)
+            if delegate_raw
+            else None
+        )
 
-        return cls(identity, gravity, network, notifications)
+        return cls(identity, gravity, network, notifications, delegate)
 
     def to_dict(self) -> dict:
         props = {}
@@ -1138,6 +1189,11 @@ class FluxnodeConfig:
             | self.gravity.to_dict(),
         }
 
+        if self.delegate:
+            delegate_output = self.delegate.to_output_dict()
+            if delegate_output:
+                config["delegate"] = delegate_output
+
         writeable_config = yaml.dump(
             config,
             sort_keys=False,
@@ -1158,20 +1214,6 @@ class FluxnodeConfig:
             "zelnodeoutpoint": identity.tx_id,
             "zelnodeindex": identity.output_id,
         }
-
-    @property
-    def gravity_properties(self) -> dict:
-        return {
-            "flux_id": self.identity.flux_id,
-            "debug": self.gravity.debug if self.gravity else False,
-            "development": self.gravity.development if self.gravity else False,
-            "testnet": self.gravity.testnet if self.gravity else False,
-            "blocked_ports": self.gravity.blocked_ports if self.gravity else [],
-            "blocked_repositories": self.gravity.blocked_repositories
-            if self.gravity
-            else [],
-        }
-
 
 @py_dataclass
 class Hypervisor:

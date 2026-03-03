@@ -54,6 +54,10 @@ nodes:
         identity_key: 5yJDb3QtTrfaghDghJKcSmhBqy6AaJAxyxk6QH8SgNW5p3RtenV
         output_id: 0
         tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba
-      gravity:
-        blocked_ports: [7777]
-        blocked_repositories: ["nasty/repo:latest"]
+      delegate: # optional
+        collateral_pubkey: "02a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        # Provide EITHER delegate_private_key_encrypted (pre-encrypted):
+        # delegate_private_key_encrypted: "YWdlLWVuY3J5cHRpb24..."
+        # OR delegate_private_key + delegate_passphrase (arcane-mage encrypts):
+        delegate_private_key: 5JoyWBdSAKdLLaG2t2vRy6L5t4hu8iEaGm65seRbyAbej46BHfW
+        delegate_passphrase: my-secret-passphrase

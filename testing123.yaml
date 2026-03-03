@@ -1,0 +1,9 @@
+identity:
+  flux_id: 121P4e2PjiznoNP7iLbBgf4syZGRBafhQQ
+  identity_key: 5JyCa2F7RTfyuvSvgJKcSmhBqy6AaJAxyxk6QH8SgNW5p3TunQH
+  tx_id: d90563545a7f76d5b7b8f7a39a73e6251b5ed6f732731d8726b6b709249f2493
+  output_id: 0
+notifications: {}
+miscellaneous:
+  ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICSorp1RcdTY0qqDm/jr/5EXtkny/s9H+2vq1fgbqU9+
+    operator@fluxnode
