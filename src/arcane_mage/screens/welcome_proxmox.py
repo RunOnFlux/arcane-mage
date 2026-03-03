@@ -451,10 +451,16 @@ class WelcomeScreenProxmox(Screen):
             return False, "Storage type missing on hypervisor"
 
         import_available = node_storage_import.get("avail", 0)
+        import_total = node_storage_import.get("total", 0)
+        import_used = node_storage_import.get("used", 0)
+        used_pct = (import_used / import_total * 100) if import_total else 0
 
         # We need 4MiB + 4MiB for the EFI image and the config image. So we check for 10MiB
         if import_available < 10485760:
-            return False, "Storage space less than 10MiB on hypervisor"
+            msg = f"Storage '{storage_import}' has less than 10MiB available ({used_pct:.1f}% used)."
+            if used_pct < 100:
+                msg += " Free up space, reduce reserved blocks, or run as root"
+            return False, msg
 
         # Should really parse these into storage objects and do stuff with them
 
