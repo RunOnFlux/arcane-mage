@@ -8,15 +8,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-import warnings
-
-# fix this before it becomes an error (11/25)
-# https://github.com/PyFilesystem/pyfilesystem2/pull/590
-with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=UserWarning)
-    import fs
-
 import yaml
+
+from arcane_mage.fat_writer import FAT12Writer
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Horizontal, Vertical
@@ -776,11 +770,8 @@ class WelcomeScreenProxmox(Screen):
                     img_fh.write(gzip.decompress(img_gz_fh.read()))
 
             # Modify the FAT filesystem to add the config
-            fat_fs = fs.open_fs(f"fat://{config_image_path}")
-            with fat_fs.openbin(
-                str(self.config_file_path), mode="wb"
-            ) as conf_fh:
-                conf_fh.write(config)
+            async with FAT12Writer(config_image_path) as fat_writer:
+                await fat_writer.write_file("arcane_config.yaml", config)
 
             # Upload the modified image
             upload_res = await self.proxmox_api.upload_file(
