@@ -21,12 +21,12 @@ import keyring
 import keyring.errors
 import pyrage
 import yaml
+from cryptography.hazmat.primitives.serialization import load_ssh_public_key
 from pydantic import EmailStr, field_validator, model_validator
 from pydantic.dataclasses import Field
 from pydantic.dataclasses import dataclass as py_dataclass
 from pydantic.networks import HttpUrl
 from pydantic.types import StringConstraints
-from sshpubkeys import InvalidKeyError, SSHKey
 from typing_extensions import Annotated
 
 
@@ -510,11 +510,9 @@ class SystemConfig:
         if not value:
             return value
 
-        key = SSHKey(value, strict=True)
-
         try:
-            key.parse()
-        except InvalidKeyError:
+            load_ssh_public_key(value.encode())
+        except Exception:
             raise ValueError("A public key in OpenSSH format is required")
 
         return value
