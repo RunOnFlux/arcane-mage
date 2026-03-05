@@ -974,7 +974,7 @@ class Delegate:
             delegate_passphrase=data.get("delegate_passphrase"),
         )
 
-    def to_output_dict(self) -> dict:
+    def to_dict(self) -> dict:
         """Produce the output dict matching flux_config_shared's Delegate schema.
 
         If a raw key + passphrase were provided, encrypts the key with pyrage.
@@ -1190,7 +1190,7 @@ class FluxnodeConfig:
         }
 
         if self.delegate:
-            delegate_output = self.delegate.to_output_dict()
+            delegate_output = self.delegate.to_dict()
             if delegate_output:
                 config["delegate"] = delegate_output
 
