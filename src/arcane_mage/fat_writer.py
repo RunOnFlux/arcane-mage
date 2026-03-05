@@ -271,8 +271,14 @@ class FAT12Writer:
             sequence = len(lfn_entries) - i
             is_last = i == 0
 
-            # Pad chunk to 13 chars with nulls
-            chunk_padded = chunk.ljust(13, "\x00")
+            # Pad chunk: filename + null terminator + 0xFFFF padding (VFAT requirement)
+            if len(chunk) < 13:
+                # Add null terminator after last char
+                chunk_padded = chunk + "\x00"
+                # Pad remaining with 0xFFFF
+                chunk_padded += "\uffff" * (13 - len(chunk_padded))
+            else:
+                chunk_padded = chunk
 
             # Encode to UCS-2 (UTF-16LE)
             name1 = chunk_padded[0:5].encode("utf-16le")
