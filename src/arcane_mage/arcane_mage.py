@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
+from typing import ClassVar
 
 from textual import on, work
 from textual.app import App
+from textual.screen import Screen
 from textual.worker import Worker, WorkerCancelled
 
 from .messages import ScreenRequested, UpdateDefaultPage
@@ -27,11 +29,14 @@ from .screens import (
 class ArcaneMage(App):
     CSS_PATH = "arcane_mage.tcss"
     AUTO_FOCUS = None
-    SCREENS = {
+    SCREENS: ClassVar[dict[str, type[Screen]]] = {
         "welcome": WelcomeScreen,
     }
 
     def __init__(self, fluxnode_config: str) -> None:
+        from .log import configure_tui_logging
+
+        configure_tui_logging()
         super().__init__()
 
         self.config = ArcaneCreatorConfig.from_fs()
@@ -181,7 +186,7 @@ class ArcaneMage(App):
 
         needs_pop = len(provisionable_nodes) > 1
 
-        if delay and not configured_node == provisionable_nodes.last:
+        if delay and configured_node != provisionable_nodes.last:
             worker = self.screen.show_delay(delay)
 
             try:

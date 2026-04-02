@@ -1,59 +1,67 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import pwd
-
+from collections.abc import AsyncGenerator, Callable, Generator
 from itertools import count
 from json import JSONDecodeError
-from socket import AF_INET
-from typing import Any, Generator, Literal, AsyncGenerator
 from pathlib import Path
-import aiofiles
-from yarl import URL
+from socket import AF_INET
+from typing import Literal
 
+import aiofiles
 from aiohttp import (
     BasicAuth as _BasicAuth,
 )
 from aiohttp import (
     ClientConnectorError,
     ClientOSError,
+    ClientResponse,
     ClientSession,
     ClientTimeout,
     ConnectionTimeoutError,
     ContentTypeError,
-    TCPConnector,
-    ClientResponse,
     ServerDisconnectedError,
+    TCPConnector,
 )
+from yarl import URL
 
-from arcane_mage.log import log
+log = logging.getLogger(__name__)
 
 
 class BasicAuth(_BasicAuth):
-    def __rich_repr__(self) -> Generator[tuple[str, str], None, None]:
+    """aiohttp BasicAuth subclass that redacts the password in repr output."""
+
+    def __repr__(self) -> str:
+        return f"BasicAuth(login={self.login!r}, password='*****', encoding={self.encoding!r})"
+
+    def __rich_repr__(self) -> Generator[tuple[str, str]]:
         yield "login", self.login
         yield "password", "*****"
         yield "encoding", self.encoding
 
 
 class ExecBinaryError(ChildProcessError):
+    """Raised when an external binary exits with an unexpected return code."""
+
     def __init__(self, cmd: list[str], stdout: bytes, stderr: bytes):
         self.__cmd = cmd
         self.__stderr = stderr
         super().__init__([cmd, (stdout, stderr)])
 
-    def stderr(self):
+    def stderr(self) -> str:
         return self.__stderr.decode(errors="ignore")
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Failed to execute '{}', error: {}".format(
             " ".join(self.__cmd), self.stderr()
         )
 
 
-def demote(user_uid, user_gid):
-    def result():
+def demote(user_uid: int, user_gid: int) -> Callable[[], None]:
+    def result() -> None:
         os.setgid(user_gid)
         os.setuid(user_uid)
 
@@ -65,8 +73,14 @@ async def exec_binary(
     expect_returncode: int = 0,
     cwd: str | None = None,
     user: str | None = None,
-    env: dict | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
+    """Run an external binary asynchronously and return its stdout.
+
+    Raises:
+        ExecBinaryError: If the process exits with an unexpected return code.
+        ChildProcessError: If the command is empty or the binary is not found.
+    """
     if len(cmd) == 0:
         raise ChildProcessError("Cannot execute empty cmd")
 
@@ -78,8 +92,8 @@ async def exec_binary(
     if user is not None:
         try:
             pw_record = pwd.getpwnam(user)
-        except KeyError:
-            raise ChildProcessError("User not found")
+        except KeyError as e:
+            raise ChildProcessError("User not found") from e
 
         extra_params["preexec_fn"] = demote(pw_record.pw_uid, pw_record.pw_gid)
 
@@ -93,8 +107,8 @@ async def exec_binary(
             stderr=asyncio.subprocess.PIPE,
             **extra_params,
         )
-    except FileNotFoundError:
-        raise ChildProcessError(f"Binary not found: {cmd[0]}, is it installed?")
+    except FileNotFoundError as e:
+        raise ChildProcessError(f"Binary not found: {cmd[0]}, is it installed?") from e
 
     try:
         stdout, stderr = await proc.communicate()
@@ -109,7 +123,7 @@ async def exec_binary(
                 cmd[0],
                 return_code,
             )
-        raise asyncio.CancelledError()
+        raise
 
     return stdout.decode()
 
@@ -118,15 +132,16 @@ async def do_http(
     url: URL | str,
     verb: Literal["get", "post", "head"] = "get",
     *,
-    data: Any = None,
+    data: dict | None = None,
     connect_timeout: int = 3,
     max_tries: int = 3,
     retry_interval: int = 1,
     credentials: list[str] | None = None,
-    headers: dict | None = None,
+    headers: dict[str, str] | None = None,
     verify_ssl: bool | None = None,
     total_timeout: int | None = None,
-) -> Any:
+) -> dict | list | None:
+    """Perform an HTTP request with automatic retries, returning parsed JSON or None."""
     timeout = ClientTimeout(connect=connect_timeout, total=total_timeout)
     conn = TCPConnector(family=AF_INET)
 
@@ -181,13 +196,7 @@ async def do_http(
                         res = None
                     break
 
-            except (
-                ClientConnectorError,
-                ConnectionTimeoutError,
-                ClientOSError,
-                ServerDisconnectedError,
-                asyncio.TimeoutError,
-            ):
+            except (TimeoutError, ClientConnectorError, ConnectionTimeoutError, ClientOSError, ServerDisconnectedError):
                 # ClientOSError: have seen Connection reset by peer
                 log.info(
                     "Unable to connect to: %s. Retries: %s remaining. Interval: %ss",
@@ -204,17 +213,18 @@ async def do_http(
 
 async def do_http_iter(
     url: str,
-    verb: str = "get",
+    verb: Literal["get", "post", "head"] = "get",
     *,
-    data: Any = None,
+    data: dict | None = None,
     connect_timeout: int = 3,
     read_timeout: int = 10,
     max_tries: int = 3,
     retry_interval: int = 1,
-    credentials: list | None = None,
-    headers: dict | None = None,
+    credentials: list[str] | None = None,
+    headers: dict[str, str] | None = None,
     verify_ssl: bool | None = None,
-) -> Any | AsyncGenerator:
+) -> AsyncGenerator[bytes]:
+    """Stream an HTTP response body as an async generator of byte chunks."""
     timeout = ClientTimeout(connect=connect_timeout, sock_read=read_timeout)
     conn = TCPConnector(family=AF_INET)
 
@@ -277,13 +287,7 @@ async def do_http_iter(
 
                     break
 
-            except (
-                ClientConnectorError,
-                ConnectionTimeoutError,
-                ClientOSError,
-                ServerDisconnectedError,
-                asyncio.TimeoutError,
-            ):
+            except (TimeoutError, ClientConnectorError, ConnectionTimeoutError, ClientOSError, ServerDisconnectedError):
                 log.warning(
                     "Unable to connect to: %s. Retries: %s remaining. Interval: %ss",
                     url,
@@ -301,6 +305,7 @@ async def do_http_to_file(
     connect_timeout: int = 3,
     read_timeout: int = 15,
 ) -> bool:
+    """Download a URL directly to a file, returning True on success."""
     timeout = ClientTimeout(connect=connect_timeout, sock_read=read_timeout)
     conn = TCPConnector(family=AF_INET)
 
@@ -323,13 +328,7 @@ async def do_http_to_file(
 
                 async for chunk in resp.content.iter_chunked(16777216):  # 16Mib
                     await file_handler.write(chunk)
-        except (
-            ClientConnectorError,
-            ConnectionTimeoutError,
-            ClientOSError,
-            ServerDisconnectedError,
-            asyncio.TimeoutError,
-        ):
+        except (TimeoutError, ClientConnectorError, ConnectionTimeoutError, ClientOSError, ServerDisconnectedError):
             # ClientOSError: have seen Connection reset by peer
             log.info(
                 "Unable to connect to: %s",

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import struct
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,14 +101,25 @@ class FAT12Writer:
         self.image_path = image_path
         self.boot_sector: BootSector | None = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> FAT12Writer:
         """Async context manager entry."""
         self.boot_sector = await BootSector.read(self.image_path)
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         pass
+
+    @property
+    def _bs(self) -> BootSector:
+        if self.boot_sector is None:
+            raise RuntimeError("FAT12Writer must be used as an async context manager")
+        return self.boot_sector
 
     async def write_file(self, filename: str, data: bytes) -> None:
         """Write a file to the FAT filesystem with VFAT long filename support.
@@ -116,10 +128,7 @@ class FAT12Writer:
             filename: Any filename (long names supported via VFAT LFN)
             data: File contents
         """
-        if not self.boot_sector:
-            raise RuntimeError("BootSector not loaded")
-
-        bs = self.boot_sector
+        bs = self._bs
 
         # Read entire image into memory (it's only 4MB)
         async with aiofiles.open(self.image_path, "rb") as f:
@@ -186,7 +195,7 @@ class FAT12Writer:
 
     async def _find_free_clusters(self, image_data: bytearray, count: int) -> list[int]:
         """Find free clusters in FAT."""
-        bs = self.boot_sector
+        bs = self._bs
         fat_offset = bs.first_fat_sector * bs.bytes_per_sector
         free_clusters = []
 
@@ -203,7 +212,7 @@ class FAT12Writer:
 
     def _read_fat_entry(self, image_data: bytearray, fat_offset: int, cluster: int) -> int:
         """Read FAT entry for given cluster."""
-        bs = self.boot_sector
+        bs = self._bs
 
         if bs.fat_type == 12:
             # FAT12: 1.5 bytes per entry
@@ -220,7 +229,7 @@ class FAT12Writer:
 
     def _write_fat_entry(self, image_data: bytearray, fat_offset: int, cluster: int, value: int) -> None:
         """Write FAT entry for given cluster."""
-        bs = self.boot_sector
+        bs = self._bs
 
         if bs.fat_type == 12:
             byte_offset = fat_offset + (cluster * 3) // 2
@@ -238,7 +247,7 @@ class FAT12Writer:
 
     async def _update_fat_chain(self, image_data: bytearray, clusters: list[int]) -> None:
         """Update FAT chain for allocated clusters."""
-        bs = self.boot_sector
+        bs = self._bs
         eoc = 0xFFF if bs.fat_type == 12 else 0xFFFF
 
         # Update all FAT copies
@@ -322,10 +331,7 @@ class FAT12Writer:
         ext = ext.upper()[:3]
 
         # Truncate base to 6 chars and add ~1
-        if len(base) > 6:
-            base = base[:6] + "~1"
-        else:
-            base = base[:8]
+        base = base[:6] + "~1" if len(base) > 6 else base[:8]
 
         return base + "." + ext if ext else base
 

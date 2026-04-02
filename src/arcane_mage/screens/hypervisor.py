@@ -208,7 +208,7 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
         select = event.select
 
-        if not select.id == "auth-type" or select.value == self.auth_type:
+        if select.id != "auth-type" or select.value == self.auth_type:
             return
 
         self.auth_type = select.value

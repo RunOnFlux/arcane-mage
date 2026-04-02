@@ -6,6 +6,8 @@ from pyescrypt import Mode, WrongPassword, WrongPasswordConfiguration, Yescrypt
 
 @dataclass
 class HashedPassword:
+    """Yescrypt password hasher for generating and validating Linux shadow-compatible hashes."""
+
     password: str
     hasher: Yescrypt = field(
         default_factory=lambda: Yescrypt(n=2**12, r=32, p=1, mode=Mode.MCF)
