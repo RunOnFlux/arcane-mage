@@ -3,6 +3,9 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 from typing import ClassVar, Literal
+from urllib.parse import urlparse
+
+from ..proxmox import ProxmoxApi
 from uuid import uuid4
 
 import keyring
@@ -21,6 +24,7 @@ class HypervisorConfig:
     auth_type: Literal["token", "userpass"]
     credential: str = Field(repr=False)
     keychain: bool = True
+    name: str | None = None
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, HypervisorConfig):
@@ -35,6 +39,29 @@ class HypervisorConfig:
         stored_cred = keyring.get_password("arcane_mage", self.credential)
 
         return stored_cred
+
+    @property
+    def display_label(self) -> str:
+        """Human-readable label for dropdowns, e.g. 'bigchug (davew)'."""
+
+        cred = self.real_credential() or self.credential
+        user = None
+
+        if self.auth_type == "token":
+            parsed = ProxmoxApi.parse_token(cred)
+            if parsed:
+                user = parsed.username
+        elif self.auth_type == "userpass":
+            parsed = ProxmoxApi.parse_user_pass(cred)
+            if parsed:
+                user = parsed.username
+
+        if self.name:
+            base = self.name
+        else:
+            base = urlparse(self.url).hostname or self.url
+
+        return f"{base} ({user})" if user else base
 
 
 @py_dataclass
@@ -112,6 +139,11 @@ class ArcaneCreatorConfig:
         self.write()
 
         return True
+
+    def update_hypervisor(self, old: HypervisorConfig, new: HypervisorConfig) -> bool:
+        """Replace an existing hypervisor config with an updated one."""
+        self.remove_hypervisor(old)
+        return self.add_hypervisor(new)
 
     def remove_hypervisor(self, hypervisor: HypervisorConfig) -> None:
         try:

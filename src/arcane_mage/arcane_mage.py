@@ -123,11 +123,35 @@ class ArcaneMage(App):
         # this is blocking but meh
         self.config.update_default_page(default)
 
+    def edit_hypervisor_callback(
+        self, old: HypervisorConfig, new: HypervisorConfig | None
+    ) -> None:
+        if not new:
+            return
+
+        updated = self.config.update_hypervisor(old, new)
+
+        if not updated:
+            self.notify("Unable to update Hypervisor (keyring)")
+            return
+
+        screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
+        screen.validate_hypervisors(new)
+
     @on(WelcomeScreenProxmox.AddHypervisor)
     def on_add_hypervisor(self) -> None:
         self.push_screen(
             AddHypervisorScreen(self.config.use_keyring),
             self.hypervisor_callback,
+        )
+
+    @on(WelcomeScreenProxmox.EditHypervisor)
+    def on_edit_hypervisor(
+        self, event: WelcomeScreenProxmox.EditHypervisor
+    ) -> None:
+        self.push_screen(
+            AddHypervisorScreen(self.config.use_keyring, existing=event.hypervisor),
+            partial(self.edit_hypervisor_callback, event.hypervisor),
         )
 
     @on(WelcomeScreenProxmox.DelHypervisor)

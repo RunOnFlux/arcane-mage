@@ -106,7 +106,6 @@ class ArcaneOsConfigGroup:
             with open(file_path) as f:
                 data = f.read()
         except (FileNotFoundError, PermissionError):
-            log.warning("Config file not accessible: %s", file_path)
             return cls()
 
         try:

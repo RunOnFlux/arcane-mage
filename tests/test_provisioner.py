@@ -71,7 +71,7 @@ class TestProvisionerValidation:
         ok, msg = await provisioner.validate_api_version("node1")
 
         assert ok is True
-        assert msg == ""
+        assert msg == "8.4.1"
 
     async def test_validate_api_version_too_old(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_api_version.return_value = ApiResponse(
@@ -168,3 +168,121 @@ class TestProvisionerValidation:
         )
 
         assert config is None
+
+    async def test_stop_vm_success(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.stop_vm.return_value = ApiResponse(status=200, payload="UPID:stop123")
+        mock_api.wait_for_task.return_value = True
+
+        result = await provisioner.stop_vm(100, "node1")
+
+        assert result is True
+        mock_api.stop_vm.assert_called_once_with(100, "node1")
+        mock_api.wait_for_task.assert_called_once_with("UPID:stop123", "node1", 30)
+
+    async def test_stop_vm_failure(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.stop_vm.return_value = ApiResponse(error="Connection refused")
+
+        result = await provisioner.stop_vm(100, "node1")
+
+        assert result is False
+
+    async def test_delete_vm_success(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del123")
+        mock_api.wait_for_task.return_value = True
+
+        result = await provisioner.delete_vm(100, "node1")
+
+        assert result is True
+        mock_api.delete_vm.assert_called_once_with(100, "node1")
+        mock_api.wait_for_task.assert_called_once_with("UPID:del123", "node1", 30)
+
+    async def test_delete_vm_failure(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.delete_vm.return_value = ApiResponse(error="Connection refused")
+
+        result = await provisioner.delete_vm(100, "node1")
+
+        assert result is False
+
+    async def test_deprovision_node_success(self, provisioner: Provisioner, mock_api: AsyncMock):
+        """VM found, running, stopped, then deleted."""
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 100, "name": "graham", "status": "running"}],
+        )
+        mock_api.stop_vm.return_value = ApiResponse(status=200, payload="UPID:stop1")
+        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.wait_for_task.return_value = True
+
+        fluxnode = AsyncMock()
+        fluxnode.hypervisor.node = "bigchug"
+        fluxnode.hypervisor.vm_name = "graham"
+
+        result = await provisioner.deprovision_node(fluxnode)
+
+        assert result is True
+        mock_api.stop_vm.assert_called_once_with(100, "bigchug")
+        mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+
+    async def test_deprovision_node_vm_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 200, "name": "other-vm", "status": "running"}],
+        )
+
+        fluxnode = AsyncMock()
+        fluxnode.hypervisor.node = "bigchug"
+        fluxnode.hypervisor.vm_name = "graham"
+
+        messages = []
+        result = await provisioner.deprovision_node(fluxnode, callback=lambda ok, msg: messages.append((ok, msg)))
+
+        assert result is False
+        assert any("not found" in msg for _, msg in messages)
+
+    async def test_deprovision_node_no_hypervisor(self, provisioner: Provisioner, mock_api: AsyncMock):
+        fluxnode = AsyncMock()
+        fluxnode.hypervisor = None
+
+        messages = []
+        result = await provisioner.deprovision_node(fluxnode, callback=lambda ok, msg: messages.append((ok, msg)))
+
+        assert result is False
+        assert any("No hypervisor" in msg for _, msg in messages)
+
+    async def test_deprovision_vm_by_name_success(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 100, "name": "graham", "status": "stopped"}],
+        )
+        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.wait_for_task.return_value = True
+
+        result = await provisioner.deprovision_vm("bigchug", vm_name="graham")
+
+        assert result is True
+        mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+
+    async def test_deprovision_vm_by_id_success(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 100, "name": "graham", "status": "stopped"}],
+        )
+        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.wait_for_task.return_value = True
+
+        result = await provisioner.deprovision_vm("bigchug", vm_id=100)
+
+        assert result is True
+        mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+
+    async def test_deprovision_vm_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 200, "name": "other", "status": "running"}],
+        )
+
+        messages = []
+        result = await provisioner.deprovision_vm("bigchug", callback=lambda ok, msg: messages.append((ok, msg)), vm_name="graham")
+
+        assert result is False
+        assert any("not found" in msg for _, msg in messages)

@@ -28,6 +28,41 @@ from aiohttp import (
 type HttpData = dict | aiohttp.MultipartWriter | None
 
 
+@dataclass(frozen=True)
+class ParsedToken:
+    """Parsed Proxmox API token."""
+
+    user: str
+    token_name: str
+    token_value: str
+
+    @property
+    def username(self) -> str:
+        """The user part without the realm, e.g. 'davew' from 'davew@pam'."""
+        return self.user.partition("@")[0] or self.user
+
+
+@dataclass(frozen=True)
+class ParsedUserPass:
+    """Parsed Proxmox user/password credential."""
+
+    user: str
+    password: str
+
+    @property
+    def username(self) -> str:
+        """The user part without the realm."""
+        return self.user.partition("@")[0] or self.user
+
+
+@dataclass(frozen=True)
+class ResolvedConnection:
+    """Resolved Proxmox connection details (URL + parsed token)."""
+
+    url: str
+    token: ParsedToken
+
+
 @dataclass
 class ApiResponse:
     """Response wrapper for Proxmox API calls, with status, payload, and error info."""
@@ -50,11 +85,11 @@ class ProxmoxApi:
 
     @classmethod
     async def from_user_pass(
-        cls, url: str, user: str, password: str, *, verify_ssl: bool = False
+        cls, url: str, credentials: ParsedUserPass, *, verify_ssl: bool = False
     ) -> ProxmoxApi | None:
         """Authenticate with username/password and return an API client, or None on failure."""
         ticket_url = f"{url}/api2/json/access/ticket"
-        payload = {"username": f"{user}@pam", "password": password}
+        payload = {"username": f"{credentials.user}@pam", "password": credentials.password}
 
         conn = TCPConnector(family=AF_INET)
         timeout = ClientTimeout(connect=2)
@@ -98,7 +133,7 @@ class ProxmoxApi:
         return cls(auth_type="userpass", client=client, verify_ssl=verify_ssl)
 
     @classmethod
-    def parse_user_pass(cls, user_pass: str) -> tuple[str, str] | None:
+    def parse_user_pass(cls, user_pass: str) -> ParsedUserPass | None:
         try:
             user, password = user_pass.split(":")
         except ValueError:
@@ -107,10 +142,10 @@ class ProxmoxApi:
         # normalize, we add it back on later
         user = user.removesuffix("@pam")
 
-        return user, password
+        return ParsedUserPass(user, password)
 
     @classmethod
-    def parse_token(cls, token: str) -> tuple[str, str, str] | None:
+    def parse_token(cls, token: str) -> ParsedToken | None:
         try:
             user, token_parts = token.split("!")
         except ValueError:
@@ -121,20 +156,18 @@ class ProxmoxApi:
         except ValueError:
             return None
 
-        return user, token_name, token_value
+        return ParsedToken(user, token_name, token_value)
 
     @classmethod
     def from_token(
         cls,
         url: str,
-        user: str,
-        token_name: str,
-        token_value: str,
+        token: ParsedToken,
         *,
         verify_ssl: bool = False,
     ) -> ProxmoxApi:
         """Create an API client using a PVE API token."""
-        client = cls.build_token_client(url, user, token_name, token_value)
+        client = cls.build_token_client(url, token.user, token.token_name, token.token_value)
 
         return cls(auth_type="token", client=client, verify_ssl=verify_ssl)
 
@@ -448,5 +481,25 @@ class ProxmoxApi:
         endpoint = f"nodes/{node}/qemu/{vm_id}/config"
 
         res = await self._do_get(endpoint)
+
+        return res
+
+    async def stop_vm(self, vm_id: int, node: str) -> ApiResponse:
+        endpoint = f"nodes/{node}/qemu/{vm_id}/status/stop"
+
+        res = await self._do_post(endpoint)
+
+        return res
+
+    async def delete_vm(self, vm_id: int, node: str, purge: bool = True, destroy_disks: bool = True) -> ApiResponse:
+        params = []
+        if purge:
+            params.append("purge=1")
+        if destroy_disks:
+            params.append("destroy-unreferenced-disks=1")
+        query = "&".join(params)
+        endpoint = f"nodes/{node}/qemu/{vm_id}{'?' + query if query else ''}"
+
+        res = await self._do_delete(endpoint)
 
         return res

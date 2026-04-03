@@ -26,6 +26,9 @@ class TestPublicApi:
         assert hasattr(arcane_mage, "Identity")
         assert hasattr(arcane_mage, "HashedPassword")
         assert hasattr(arcane_mage, "ApiResponse")
+        assert hasattr(arcane_mage, "ParsedToken")
+        assert hasattr(arcane_mage, "ParsedUserPass")
+        assert hasattr(arcane_mage, "ResolvedConnection")
 
     def test_internal_types_not_exported(self):
         """Helpers and internal types should not be in the top-level API."""

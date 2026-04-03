@@ -20,8 +20,6 @@ from textual.widgets import (
     Select,
     Switch,
 )
-from yarl import URL
-
 from ..messages import UpdateDefaultPage
 from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from ..provisioner import Provisioner, get_latest_iso_version
@@ -29,6 +27,11 @@ from ..provisioner import Provisioner, get_latest_iso_version
 
 class WelcomeScreenProxmox(Screen):
     class AddHypervisor(Message): ...
+
+    class EditHypervisor(Message):
+        def __init__(self, hypervisor: HypervisorConfig) -> None:
+            super().__init__()
+            self.hypervisor = hypervisor
 
     class DelHypervisor(Message):
         def __init__(self, hypervisor: HypervisorConfig) -> None:
@@ -80,7 +83,7 @@ class WelcomeScreenProxmox(Screen):
         self.hypervisor_populated = False
 
         select = self.query_one(Select)
-        options = [(URL(x.url).host, x.url) for x in self.hypervisors]
+        options = [(x.display_label, x.url) for x in self.hypervisors]
 
         if hypervisor:
             select.set_options(options)
@@ -171,6 +174,7 @@ class WelcomeScreenProxmox(Screen):
                 with Horizontal(id="first-column"):
                     yield Button("\u21b0", id="back", classes="icon-button", tooltip="Back")
                     yield Button("Add", id="add-hypervisor", tooltip="Add Hypervisor")
+                    yield Button("Edit", id="edit-hypervisor", tooltip="Edit Hypervisor")
                     yield Button("Del", id="del-hypervisor", tooltip="Delete Hypervisor")
                 with Horizontal(id="second-column"):
                     yield Label("Selected:", classes="text-label")
@@ -205,6 +209,12 @@ class WelcomeScreenProxmox(Screen):
 
         if event.button.id == "add-hypervisor":
             self.post_message(WelcomeScreenProxmox.AddHypervisor())
+        elif event.button.id == "edit-hypervisor":
+            select = self.query_one(Select)
+            if select.value == Select.BLANK:
+                return
+            if hyper := self.get_hypervisor_by_url(select.value):
+                self.post_message(WelcomeScreenProxmox.EditHypervisor(hyper))
         elif event.button.id == "del-hypervisor":
             select = self.query_one(Select)
             if select.value == Select.BLANK:

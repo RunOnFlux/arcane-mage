@@ -130,9 +130,9 @@ class Provisioner:
         api: ProxmoxApi | None = None
 
         if config.auth_type == "token" and (token := ProxmoxApi.parse_token(credential)):
-            api = ProxmoxApi.from_token(config.url, *token)
+            api = ProxmoxApi.from_token(config.url, token)
         elif config.auth_type == "userpass" and (user_pass := ProxmoxApi.parse_user_pass(credential)):
-            api = await ProxmoxApi.from_user_pass(config.url, *user_pass)
+            api = await ProxmoxApi.from_user_pass(config.url, user_pass)
 
         if not api:
             return None
@@ -179,7 +179,7 @@ class Provisioner:
         if not is_api_min_version(version):
             return False, f"Api version too old. Got: {version}, Want: {MIN_API_VERSION}"
 
-        return True, ""
+        return True, version
 
     async def validate_storage(
         self,
@@ -220,7 +220,7 @@ class Provisioner:
         if import_available < MIN_IMPORT_STORAGE_BYTES:
             msg = f"Storage '{storage_import}' has less than 10MiB available ({used_pct:.1f}% used)."
             if used_pct < 100:
-                msg += " Free up space, reduce reserved blocks, or run as root"
+                msg += " Free up space, reduce reserved blocks, or use a root@pam API token"
             return False, msg
 
         return True, ""
@@ -252,6 +252,142 @@ class Provisioner:
         network_exists = next(filter(lambda x: x.get("iface") == network, res.payload), None)
 
         return bool(network_exists)
+
+    async def stop_vm(self, vm_id: int, node: str) -> bool:
+        """Stop a VM and wait for the task to complete."""
+        res = await self.api.stop_vm(vm_id, node)
+
+        if not res:
+            return False
+
+        return await self.api.wait_for_task(res.payload, node, 30)
+
+    async def delete_vm(self, vm_id: int, node: str) -> bool:
+        """Delete a VM (with disk purge) and wait for the task to complete."""
+        res = await self.api.delete_vm(vm_id, node)
+
+        if not res:
+            return False
+
+        return await self.api.wait_for_task(res.payload, node, 30)
+
+    async def _stop_and_delete_vm(
+        self,
+        vm_id: int,
+        vm_name: str,
+        vm_status: str,
+        node: str,
+        callback: Callable[[bool, str], None] | None = None,
+    ) -> bool:
+        """Stop a VM (if running) then delete it with its disks."""
+        if callback:
+            callback(True, f"Found VM {vm_name} (id={vm_id}, status={vm_status})")
+
+        if vm_status == "running":
+            if callback:
+                callback(True, "Stopping VM...")
+            stopped = await self.stop_vm(vm_id, node)
+            if not stopped:
+                if callback:
+                    callback(False, "Failed to stop VM")
+                return False
+            if callback:
+                callback(True, "VM stopped")
+
+        if callback:
+            callback(True, "Deleting VM and disks...")
+        deleted = await self.delete_vm(vm_id, node)
+        if not deleted:
+            if callback:
+                callback(False, "Failed to delete VM")
+            return False
+
+        if callback:
+            callback(True, "VM deleted")
+
+        return True
+
+    async def deprovision_node(
+        self,
+        fluxnode: "ArcaneOsConfig",
+        callback: Callable[[bool, str], None] | None = None,
+    ) -> bool:
+        """Deprovision a single Fluxnode VM from a Proxmox hypervisor.
+
+        Stops the VM (if running), then deletes it along with its disks.
+
+        Args:
+            fluxnode: The node configuration to deprovision.
+            callback: Optional progress callback receiving (success, message).
+
+        Returns:
+            True if deprovisioning succeeded, False otherwise.
+        """
+        hyper = fluxnode.hypervisor
+
+        if not hyper:
+            if callback:
+                callback(False, "No hypervisor config")
+            return False
+
+        vms_res = await self.api.get_vms(hyper.node)
+        if not vms_res:
+            if callback:
+                callback(False, "Unable to list VMs")
+            return False
+
+        vm = next(
+            (v for v in vms_res.payload if v.get("name") == hyper.vm_name),
+            None,
+        )
+
+        if not vm:
+            if callback:
+                callback(False, f"VM '{hyper.vm_name}' not found on {hyper.node}")
+            return False
+
+        return await self._stop_and_delete_vm(
+            vm["vmid"], hyper.vm_name, vm.get("status", "unknown"), hyper.node, callback,
+        )
+
+    async def deprovision_vm(
+        self,
+        node: str,
+        callback: Callable[[bool, str], None] | None = None,
+        *,
+        vm_name: str | None = None,
+        vm_id: int | None = None,
+    ) -> bool:
+        """Deprovision a VM by name or ID directly, without a config file.
+
+        Exactly one of vm_name or vm_id must be provided.
+        """
+        vms_res = await self.api.get_vms(node)
+        if not vms_res:
+            if callback:
+                callback(False, f"Unable to list VMs on {node}")
+            return False
+
+        vm: dict | None = None
+        if vm_id is not None:
+            vm = next((v for v in vms_res.payload if v.get("vmid") == vm_id), None)
+            if not vm:
+                if callback:
+                    callback(False, f"VM id={vm_id} not found on {node}")
+                return False
+        elif vm_name is not None:
+            vm = next((v for v in vms_res.payload if v.get("name") == vm_name), None)
+            if not vm:
+                if callback:
+                    callback(False, f"VM '{vm_name}' not found on {node}")
+                return False
+
+        if not vm:
+            return False
+
+        return await self._stop_and_delete_vm(
+            vm["vmid"], vm.get("name", str(vm["vmid"])), vm.get("status", "unknown"), node, callback,
+        )
 
     async def start_vm(self, vm_id: int, node: str) -> bool:
         """Start a VM and wait for the task to complete."""

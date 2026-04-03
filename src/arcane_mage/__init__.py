@@ -20,12 +20,14 @@ from .models import (
 )
 from .password import HashedPassword
 from .provisioner import TIER_CONFIG, HypervisorDiscovery, Provisioner, get_latest_iso_version
-from .proxmox import ApiResponse, ProxmoxApi
+from .proxmox import ApiResponse, ParsedToken, ParsedUserPass, ProxmoxApi, ResolvedConnection
 
 __all__ = [
     "TIER_CONFIG",
     "AddressConfig",
     "ApiResponse",
+    "ParsedToken",
+    "ParsedUserPass",
     "ArcaneCreatorConfig",
     "ArcaneOsConfig",
     "ArcaneOsConfigGroup",
@@ -44,6 +46,7 @@ __all__ = [
     "Notifications",
     "Provisioner",
     "ProxmoxApi",
+    "ResolvedConnection",
     "SystemConfig",
     "get_latest_iso_version",
 ]

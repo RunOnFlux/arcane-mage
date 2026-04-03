@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from arcane_mage.proxmox import ApiResponse, ProxmoxApi
+import pytest
+
+from arcane_mage.proxmox import ApiResponse, ParsedToken, ParsedUserPass, ProxmoxApi, ResolvedConnection
 
 
 class TestApiResponse:
@@ -35,18 +37,29 @@ class TestProxmoxApiParsing:
         result = ProxmoxApi.parse_token("user@pam!mytoken=secret-value")
 
         assert result is not None
-        assert result == ("user@pam", "mytoken", "secret-value")
+        assert result == ParsedToken("user@pam", "mytoken", "secret-value")
+        assert result.user == "user@pam"
+        assert result.username == "user"
+        assert result.token_name == "mytoken"
+        assert result.token_value == "secret-value"
 
     def test_parse_token_invalid(self):
         result = ProxmoxApi.parse_token("invalid-token-format")
 
         assert result is None
 
+    def test_parse_token_username_no_realm(self):
+        result = ProxmoxApi.parse_token("admin!mytoken=value")
+
+        assert result is not None
+        assert result.username == "admin"
+
     def test_parse_user_pass_valid(self):
         result = ProxmoxApi.parse_user_pass("admin:password123")
 
         assert result is not None
-        assert result == ("admin", "password123")
+        assert result == ParsedUserPass("admin", "password123")
+        assert result.username == "admin"
 
     def test_parse_user_pass_invalid(self):
         result = ProxmoxApi.parse_user_pass("no-colon-here")
@@ -57,4 +70,27 @@ class TestProxmoxApiParsing:
         result = ProxmoxApi.parse_user_pass("admin@pam:password123")
 
         assert result is not None
-        assert result == ("admin", "password123")
+        assert result == ParsedUserPass("admin", "password123")
+        assert result.username == "admin"
+
+
+class TestResolvedConnection:
+    def test_creation(self):
+        token = ParsedToken("user@pam", "mytoken", "secret-value")
+        conn = ResolvedConnection(url="https://pve.local:8006", token=token)
+
+        assert conn.url == "https://pve.local:8006"
+        assert conn.token == token
+        assert conn.token.user == "user@pam"
+        assert conn.token.token_name == "mytoken"
+        assert conn.token.token_value == "secret-value"
+
+    def test_frozen(self):
+        token = ParsedToken("user@pam", "mytoken", "secret-value")
+        conn = ResolvedConnection(url="https://pve.local:8006", token=token)
+
+        with pytest.raises(AttributeError):
+            conn.url = "https://other.local:8006"
+
+        with pytest.raises(AttributeError):
+            conn.token = ParsedToken("other@pam", "t", "v")

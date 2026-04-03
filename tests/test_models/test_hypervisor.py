@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from pydantic import ValidationError
 
-from arcane_mage.models import Hypervisor, HypervisorConfig
+from arcane_mage.models import ArcaneCreatorConfig, Hypervisor, HypervisorConfig
 
 
 class TestHypervisorConfig:
@@ -46,6 +48,76 @@ class TestHypervisorConfig:
             keychain=False,
         )
         assert config.real_credential() == "raw-credential"
+
+    def test_display_label_name_with_token(self):
+        config = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="token",
+            credential="davew@pam!mytoken=secret",
+            keychain=False,
+            name="bigchug",
+        )
+        assert config.display_label == "bigchug (davew)"
+
+    def test_display_label_name_with_userpass(self):
+        config = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="userpass",
+            credential="admin:password123",
+            keychain=False,
+            name="bigchug",
+        )
+        assert config.display_label == "bigchug (admin)"
+
+    def test_display_label_no_name_falls_back_to_hostname(self):
+        config = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="token",
+            credential="davew@pam!mytoken=secret",
+            keychain=False,
+        )
+        assert config.display_label == "pve.local (davew)"
+
+    def test_display_label_no_parseable_credential(self):
+        config = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="token",
+            credential="not-a-valid-token",
+            keychain=False,
+            name="bigchug",
+        )
+        assert config.display_label == "bigchug"
+
+    @patch("arcane_mage.models.hypervisor.keyring")
+    def test_update_hypervisor(self, mock_keyring: MagicMock):
+        mock_keyring.get_password.return_value = None
+        mock_keyring.set_password.return_value = None
+        mock_keyring.delete_password.return_value = None
+
+        old = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="token",
+            credential="old-cred",
+            keychain=False,
+            name="old-name",
+        )
+        new = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="token",
+            credential="new-cred",
+            keychain=False,
+            name="new-name",
+        )
+
+        creator_config = ArcaneCreatorConfig(hypervisors=[old], use_keyring=False)
+
+        with patch.object(ArcaneCreatorConfig, "write"):
+            result = creator_config.update_hypervisor(old, new)
+
+        assert result is True
+        assert len(creator_config.hypervisors) == 1
+        assert creator_config.hypervisors[0].credential == "new-cred"
+        assert creator_config.hypervisors[0].name == "new-name"
 
 
 class TestHypervisor:
