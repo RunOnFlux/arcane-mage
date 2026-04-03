@@ -2,15 +2,15 @@
 # One node, all settings used
 nodes:
   - hypervisor:
-      node: bighypervisor # required
+      node: pve1 # required
       storage_images: local-lvm # required
       storage_iso: local # required
       storage_import: local # required
       startup_config: order=4,up=360 # optional
       network: vmbr2 # required
-      iso_name: FluxLive-1747905921.iso # required
+      iso_name: FluxLive-1775071308.iso # required
       start_on_creation: true # default false
-      vm_name: barbados # required
+      vm_name: mynode # required
       vm_id: 107 # optional. Will use next available id if not present
       node_tier: stratus # required
       disk_limit: 200 # optional
@@ -23,14 +23,14 @@ nodes:
     network: # optional
       ip_allocation: static # default dhcp, optional
       address_config: # optional
-        address: 192.168.44.13/24 # required
-        gateway: 192.168.44.1 # required
+        address: 192.168.1.10/24 # required
+        gateway: 192.168.1.1 # required
         dns: # required
           - 8.8.8.8
           - 1.1.1.1
     system: # required
-      hostname: barbados # required
-      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICSorp1RcdDK0qqDm/jr/5EXtkny/s9H+2vq1fgbqU9+ operator@fluxnode # optional
+      hostname: mynode # required
+      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator@fluxnode # optional
       keyboard: # optional
         layout: us # this is the default
         variant: ""
@@ -40,24 +40,24 @@ nodes:
     fluxnode: # required
       notifications: # optional
         discord:
-          user_id: '321487457843565639'
-          webhook_url: https://discord.com/api/webhooks/1380482660937498686/4_fEVl_gYoLcp8gt-WcsCqvizrb9BPMOk40d-N6LIQmDkv4-KoBRE8iX0YsMbtWoGzmM
+          user_id: '123456789012345678'
+          webhook_url: https://discord.com/api/webhooks/000000000000000000/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
       network: # optional
         upnp_port: 16167 # required if UPnP
-        router_address: 192.168.44.1 # required if UPnP
+        router_address: 192.168.1.1 # required if UPnP
         private_chain_sources: # optional - this is handy if you don't have UPnP but
         # have a local chain. MUST be private addresses or they will be skipped
-        - 192.168.44.10:16197
-        - 192.168.44.11:16187
+        - 192.168.1.20:16197
+        - 192.168.1.21:16187
       identity: # required
-        flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
-        identity_key: 5yJDb3QtTrfaghDghJKcSmhBqy6AaJAxyxk6QH8SgNW5p3RtenV
+        flux_id: 1ExampleFluxAddressxxxxxxxxxxxxxxxxxx
+        identity_key: L1ExampleIdentityKeyxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
         output_id: 0
-        tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba
+        tx_id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       delegate: # optional
         collateral_pubkey: "02a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
         # Provide EITHER delegate_private_key_encrypted (pre-encrypted):
         # delegate_private_key_encrypted: "YWdlLWVuY3J5cHRpb24..."
         # OR delegate_private_key + delegate_passphrase (arcane-mage encrypts):
-        delegate_private_key: 5JoyWBdSAKdLLaG2t2vRy6L5t4hu8iEaGm65seRbyAbej46BHfW
+        delegate_private_key: 5ExampleDelegatePrivateKeyxxxxxxxxxxxxxxxxxxxxxxxxx
         delegate_passphrase: my-secret-passphrase

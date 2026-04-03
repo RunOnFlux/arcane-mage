@@ -28,39 +28,56 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
     auth_type: var[Literal["token", "userpass"]] = var("token")
 
-    def __init__(self, use_keyring: bool) -> None:
+    def __init__(self, use_keyring: bool, existing: HypervisorConfig | None = None) -> None:
         super().__init__()
 
         self.use_keyring = use_keyring
+        self.existing = existing
+        self._resolved_name: str | None = existing.name if existing else None
 
     def on_screen_resume(self):
         self.app.set_focus(None)
 
     def compose(self) -> ComposeResult:
+        title = "Edit Hypervisor" if self.existing else "Add Hypervisor"
         container = Container()
-        container.border_title = "Add Hypervisor"
+        container.border_title = title
 
         info_label = Label("", id="info-label")
         info_label.visible = False
+
+        initial_auth = self.existing.auth_type if self.existing else "token"
+        initial_url = self.existing.url if self.existing else ""
+        initial_creds = ""
+        if self.existing:
+            initial_creds = self.existing.real_credential() or ""
+
+        auth_labels = {"token": "API Token:", "userpass": "User / Pass:"}
+        auth_placeholders = {
+            "token": "USER@REALM!TOKENID=UUID",
+            "userpass": "username:password",
+        }
 
         with container:
             with Grid():
                 yield Label("Auth Type:", classes="text-label")
                 yield Select(
                     options=[("Token", "token"), ("User / Pass", "userpass")],
-                    value="token",
+                    value=initial_auth,
                     allow_blank=False,
                     id="auth-type",
                 )
                 yield Label("API URL:", classes="text-label")
                 yield Input(
+                    value=initial_url,
                     placeholder="https://your.server:8006",
                     validators=[URL()],
                     id="url-input",
                 )
-                yield Label("API Token:", classes="text-label", id="auth-label")
+                yield Label(auth_labels[initial_auth], classes="text-label", id="auth-label")
                 yield Input(
-                    placeholder="USER@REALM!TOKENID=UUID",
+                    value=initial_creds,
+                    placeholder=auth_placeholders[initial_auth],
                     password=True,
                     id="auth-input",
                 )
@@ -77,6 +94,12 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
         yield Footer()
 
+    def on_mount(self) -> None:
+        if self.existing:
+            self.auth_type = self.existing.auth_type
+            self.url = self.existing.url
+            self.creds = self.existing.real_credential() or ""
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "url-input":
             self.url = event.value
@@ -85,6 +108,10 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
         if self.has_message:
             self.clear_message()
+
+        # Reset validation when fields change
+        if self.hypervisor_valid:
+            self.hypervisor_valid = False
 
     def compute_url_valid(self) -> bool:
         try:
@@ -120,7 +147,8 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
         if event.button.id == "validate":
             self.validate_hypervisor()
         elif event.button.id == "save":
-            self.dismiss(HypervisorConfig(self.url, self.auth_type, self.creds))
+            config = HypervisorConfig(self.url, self.auth_type, self.creds, name=self._resolved_name)
+            self.dismiss(config)
         elif event.button.id == "cancel":
             self.dismiss(None)
         elif event.button.id == "reveal":
@@ -135,7 +163,7 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
             token = ProxmoxApi.parse_token(self.creds)
 
             if token:
-                client = ProxmoxApi.from_token(self.url, *token)
+                client = ProxmoxApi.from_token(self.url, token)
             else:
                 self.set_message(
                     msg_type="error", value="Unable to parse token"
@@ -145,7 +173,7 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
             user_pass = ProxmoxApi.parse_user_pass(self.creds)
 
             if user_pass:
-                client = await ProxmoxApi.from_user_pass(self.url, *user_pass)
+                client = await ProxmoxApi.from_user_pass(self.url, user_pass)
             else:
                 self.set_message(
                     msg_type="error", value="Unable to parse user / pass"
@@ -165,6 +193,12 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
             self.set_message(msg_type="error", value=res.error)
             self.hypervisor_valid = False
         else:
+            # Extract node name from API response
+            if isinstance(res.payload, list):
+                names = [n.get("node", "") for n in res.payload if n.get("node")]
+                if names:
+                    self._resolved_name = names[0] if len(names) == 1 else ",".join(sorted(names))
+
             self.set_message(msg_type="info", value="Validated")
             self.hypervisor_valid = True
 
@@ -208,7 +242,7 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
         select = event.select
 
-        if not select.id == "auth-type" or select.value == self.auth_type:
+        if select.id != "auth-type" or select.value == self.auth_type:
             return
 
         self.auth_type = select.value

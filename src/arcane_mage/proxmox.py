@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import types
 import urllib.parse
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from io import BufferedReader
 from pathlib import Path
 from socket import AF_INET
 from time import monotonic
-from typing import Any, AsyncIterator, Literal
+from typing import Literal
 
 import aiohttp
 from aiohttp import (
@@ -21,11 +24,51 @@ from aiohttp import (
     TCPConnector,
 )
 
+# Concrete type for HTTP request data passed to aiohttp methods
+type HttpData = dict | aiohttp.MultipartWriter | None
+
+
+@dataclass(frozen=True)
+class ParsedToken:
+    """Parsed Proxmox API token."""
+
+    user: str
+    token_name: str
+    token_value: str
+
+    @property
+    def username(self) -> str:
+        """The user part without the realm, e.g. 'davew' from 'davew@pam'."""
+        return self.user.partition("@")[0] or self.user
+
+
+@dataclass(frozen=True)
+class ParsedUserPass:
+    """Parsed Proxmox user/password credential."""
+
+    user: str
+    password: str
+
+    @property
+    def username(self) -> str:
+        """The user part without the realm."""
+        return self.user.partition("@")[0] or self.user
+
+
+@dataclass(frozen=True)
+class ResolvedConnection:
+    """Resolved Proxmox connection details (URL + parsed token)."""
+
+    url: str
+    token: ParsedToken
+
 
 @dataclass
 class ApiResponse:
+    """Response wrapper for Proxmox API calls, with status, payload, and error info."""
+
     status: int | None = None
-    payload: Any = None
+    payload: dict | list | str | None = None
     timed_out: bool = False
     error: str | None = None
 
@@ -38,12 +81,15 @@ class ApiResponse:
 
 
 class ProxmoxApi:
+    """Async client for the Proxmox VE API, supporting token and user/password auth."""
+
     @classmethod
     async def from_user_pass(
-        cls, url: str, user: str, password: str
+        cls, url: str, credentials: ParsedUserPass, *, verify_ssl: bool = False
     ) -> ProxmoxApi | None:
+        """Authenticate with username/password and return an API client, or None on failure."""
         ticket_url = f"{url}/api2/json/access/ticket"
-        payload = {"username": f"{user}@pam", "password": password}
+        payload = {"username": f"{credentials.user}@pam", "password": credentials.password}
 
         conn = TCPConnector(family=AF_INET)
         timeout = ClientTimeout(connect=2)
@@ -52,7 +98,7 @@ class ProxmoxApi:
             async with aiohttp.ClientSession(
                 connector=conn, timeout=timeout
             ) as client:
-                res = await client.post(ticket_url, data=payload, ssl=False)
+                res = await client.post(ticket_url, data=payload, ssl=verify_ssl)
         except ClientError:
             return None
 
@@ -84,10 +130,10 @@ class ProxmoxApi:
 
         client = cls.build_password_client(url, ticket, csrf)
 
-        return cls(auth_type="userpass", client=client)
+        return cls(auth_type="userpass", client=client, verify_ssl=verify_ssl)
 
     @classmethod
-    def parse_user_pass(cls, user_pass: str) -> tuple[str, str] | None:
+    def parse_user_pass(cls, user_pass: str) -> ParsedUserPass | None:
         try:
             user, password = user_pass.split(":")
         except ValueError:
@@ -96,10 +142,10 @@ class ProxmoxApi:
         # normalize, we add it back on later
         user = user.removesuffix("@pam")
 
-        return user, password
+        return ParsedUserPass(user, password)
 
     @classmethod
-    def parse_token(cls, token: str) -> tuple[str, str, str] | None:
+    def parse_token(cls, token: str) -> ParsedToken | None:
         try:
             user, token_parts = token.split("!")
         except ValueError:
@@ -110,19 +156,20 @@ class ProxmoxApi:
         except ValueError:
             return None
 
-        return user, token_name, token_value
+        return ParsedToken(user, token_name, token_value)
 
     @classmethod
     def from_token(
         cls,
         url: str,
-        user: str,
-        token_name: str,
-        token_value: str,
+        token: ParsedToken,
+        *,
+        verify_ssl: bool = False,
     ) -> ProxmoxApi:
-        client = cls.build_token_client(url, user, token_name, token_value)
+        """Create an API client using a PVE API token."""
+        client = cls.build_token_client(url, token.user, token.token_name, token.token_value)
 
-        return cls(auth_type="token", client=client)
+        return cls(auth_type="token", client=client, verify_ssl=verify_ssl)
 
     @staticmethod
     def build_password_client(
@@ -134,11 +181,16 @@ class ProxmoxApi:
         jar = aiohttp.CookieJar(quote_cookie=False)
         jar.update_cookies(cookies)
 
+        conn = TCPConnector(family=AF_INET)
+        timeout = ClientTimeout(connect=2)
+
         return aiohttp.ClientSession(
             base_url=f"{url}/api2/json/",
+            connector=conn,
             cookie_jar=jar,
             cookies=cookies,
             headers=headers,
+            timeout=timeout,
         )
 
     @staticmethod
@@ -172,8 +224,8 @@ class ProxmoxApi:
         except (json.JSONDecodeError, ContentTypeError) as e:
             return ApiResponse(status=response.status, error=str(e))
 
-        data = payload.get("data", None)
-        message = payload.get("message", None)
+        data = payload.get("data")
+        message = payload.get("message")
 
         return ApiResponse(status=response.status, payload=data, error=message)
 
@@ -181,9 +233,23 @@ class ProxmoxApi:
         self,
         auth_type: Literal["token", "userpass"],
         client: aiohttp.ClientSession,
+        *,
+        verify_ssl: bool = False,
     ) -> None:
-        self.type = auth_type
+        self.auth_type = auth_type
         self.client = client
+        self.verify_ssl = verify_ssl
+
+    async def __aenter__(self) -> ProxmoxApi:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        await self.close()
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[None]:
@@ -195,73 +261,61 @@ class ProxmoxApi:
     async def close(self) -> None:
         await self.client.close()
 
-    async def do_http(
+    async def _do_http(
         self,
         verb: Literal["get", "put", "post", "delete"],
         path: str,
-        data: Any = None,
+        data: HttpData = None,
     ) -> ApiResponse:
         method = getattr(self.client, verb)
 
         try:
-            res = await method(path, ssl=False, data=data)
+            res = await method(path, ssl=self.verify_ssl, data=data)
         except ConnectionTimeoutError:
             return ApiResponse(timed_out=True)
         except ClientError:
             return ApiResponse(error="Connection Error")
 
-        data = await self.handle_api_response(res)
+        return await self.handle_api_response(res)
 
-        print(res.url, data)
+    async def _do_get(self, path: str) -> ApiResponse:
+        return await self._do_http("get", path)
 
-        return data
+    async def _do_post(self, path: str, data: HttpData = None) -> ApiResponse:
+        return await self._do_http("post", path, data)
 
-    async def do_get(self, path: str) -> ApiResponse:
-        data = await self.do_http("get", path)
+    async def _do_put(self, path: str, data: HttpData = None) -> ApiResponse:
+        return await self._do_http("put", path, data)
 
-        return data
-
-    async def do_post(self, path: str, data: Any = None) -> ApiResponse:
-        data = await self.do_http("post", path, data)
-
-        return data
-
-    async def do_put(self, path: str, data: Any = None) -> ApiResponse:
-        data = await self.do_http("put", path, data)
-
-        return data
-
-    async def do_delete(self, path: str) -> ApiResponse:
-        data = await self.do_http("delete", path)
-
-        return data
+    async def _do_delete(self, path: str) -> ApiResponse:
+        return await self._do_http("delete", path)
 
     async def get_api_version(self, node: str) -> ApiResponse:
-        res = await self.do_get(f"nodes/{node}/version")
+        res = await self._do_get(f"nodes/{node}/version")
 
         return res
 
     async def get_cluster_nodes(self) -> ApiResponse:
-        res = await self.do_get("cluster/config/nodes")
+        res = await self._do_get("cluster/config/nodes")
 
         return res
 
     async def get_hypervisor_nodes(self) -> ApiResponse:
-        res = await self.do_get("nodes")
+        res = await self._do_get("nodes")
 
         return res
 
     async def get_networks(self, node: str) -> ApiResponse:
         endpoint = f"nodes/{node}/network"
 
-        res = await self.do_get(endpoint)
+        res = await self._do_get(endpoint)
 
         return res
 
     async def get_storage_state(self, node: str) -> ApiResponse:
         endpoint = f"nodes/{node}/storage"
 
-        res = await self.do_get(endpoint)
+        res = await self._do_get(endpoint)
 
         return res
 
@@ -270,12 +324,12 @@ class ProxmoxApi:
     ) -> ApiResponse:
         endpoint = f"nodes/{node}/storage/{location}/content"
 
-        res = await self.do_get(endpoint)
+        res = await self._do_get(endpoint)
 
         return res
 
     async def get_storage_config(self) -> ApiResponse:
-        res = await self.do_get("storage")
+        res = await self._do_get("storage")
 
         return res
 
@@ -285,39 +339,39 @@ class ProxmoxApi:
         endpoint = f"storage/{storage_id}"
         data = {"content": content}
 
-        res = await self.do_put(endpoint, data=data)
+        res = await self._do_put(endpoint, data=data)
 
         return res
 
     async def download_iso(
-        self, url: str, filename: str, storage: str, verify_certs: bool = True
+        self, node: str, url: str, filename: str, storage: str, verify_certs: bool = True
     ) -> ApiResponse:
+        endpoint = f"nodes/{node}/storage/{storage}/download-url"
         data = {
             "content": "iso",
             "filename": filename,
-            "storage": storage,
             "url": url,
             "verify-certificates": verify_certs,
         }
 
-        res = await self.do_post(url, data=data)
+        res = await self._do_post(endpoint, data=data)
 
         return res
 
     async def get_next_id(self) -> ApiResponse:
-        res = await self.do_get("cluster/nextid")
+        res = await self._do_get("cluster/nextid")
 
         return res
 
     async def create_vm(self, config: dict, node: str) -> ApiResponse:
-        res = await self.do_post(f"nodes/{node}/qemu", data=config)
+        res = await self._do_post(f"nodes/{node}/qemu", data=config)
 
         return res
 
     async def start_vm(self, vm_id: int, node: str) -> ApiResponse:
         endpoint = f"nodes/{node}/qemu/{vm_id}/status/start"
 
-        res = await self.do_post(endpoint)
+        res = await self._do_post(endpoint)
 
         return res
 
@@ -325,7 +379,7 @@ class ProxmoxApi:
         quoted_task = urllib.parse.quote(task_id)
         endpoint = f"nodes/{node}/tasks/{quoted_task}/status"
 
-        res = await self.do_get(endpoint)
+        res = await self._do_get(endpoint)
 
         return res
 
@@ -362,7 +416,7 @@ class ProxmoxApi:
         volume = f"{storage}:{content}/{file_name}"
         endpoint = f"nodes/{node}/storage/{storage}/content/{volume}"
 
-        res = await self.do_delete(endpoint)
+        res = await self._do_delete(endpoint)
 
         return res
 
@@ -374,58 +428,78 @@ class ProxmoxApi:
         file_name: str | None = None,
     ) -> ApiResponse:
         endpoint = f"nodes/{node}/storage/{storage}/upload"
-        payload: BufferedReader | bytes
 
-        if isinstance(file, Path):
-            payload = open(file, "rb")
-        elif (is_bytes := isinstance(file, bytes)) and not file_name:
-            return ApiResponse(error="Unuseable file")
-        elif is_bytes:
-            payload = file
-        else:
+        if isinstance(file, bytes) and not file_name:
             return ApiResponse(error="Unuseable file")
 
-        # Why proxmox does this is beyond me. This took hours to figure out. Had to
-        # packet capture and decode the ssl traffic with wireshark. The multipart data
-        # has to be in this specific order, as well as the headers have to be in order.
-        with aiohttp.MultipartWriter("form-data") as mpwriter:
-            content_part = mpwriter.append(
-                "import".encode("utf-8"),
-            )
-            content_part.set_content_disposition("form-data", name="content")
+        # aiohttp's MultipartWriter.append() requires a synchronous file-like
+        # object, so we open with the stdlib and manage the handle with ExitStack
+        # to guarantee cleanup regardless of which code path we take.
+        with contextlib.ExitStack() as stack:
+            if isinstance(file, Path):
+                payload: BufferedReader | bytes = stack.enter_context(open(file, "rb"))
+                resolved_name = file_name or file.name
+            elif isinstance(file, bytes):
+                payload = file
+                resolved_name = file_name  # already validated non-None above
+            else:
+                return ApiResponse(error="Unuseable file")
 
-            file_part = mpwriter.append(
-                payload,
-            )
+            # Why proxmox does this is beyond me. This took hours to figure out. Had to
+            # packet capture and decode the ssl traffic with wireshark. The multipart data
+            # has to be in this specific order, as well as the headers have to be in order.
+            with aiohttp.MultipartWriter("form-data") as mpwriter:
+                content_part = mpwriter.append(b"import")
+                content_part.set_content_disposition("form-data", name="content")
 
-            # The name=filename must be present
-            file_part.set_content_disposition(
-                "form-data", name="filename", filename=file_name or file.name
-            )
+                file_part = mpwriter.append(payload)
 
-            for part in mpwriter:
-                # this is because proxmox is insane, the content-disposition header
-                # must be before the content-type. Absolutely cooked.
-                content_type = part[0].headers.pop(aiohttp.hdrs.CONTENT_TYPE)
-                part[0].headers[aiohttp.hdrs.CONTENT_TYPE] = content_type
+                # The name=filename must be present
+                file_part.set_content_disposition("form-data", name="filename", filename=resolved_name)
 
-            res = await self.do_post(
-                endpoint,
-                data=mpwriter,
-            )
+                for part in mpwriter:
+                    # this is because proxmox is insane, the content-disposition header
+                    # must be before the content-type. Absolutely cooked.
+                    content_type = part[0].headers.pop(aiohttp.hdrs.CONTENT_TYPE)
+                    part[0].headers[aiohttp.hdrs.CONTENT_TYPE] = content_type
+
+                res = await self._do_post(
+                    endpoint,
+                    data=mpwriter,
+                )
 
         return res
 
     async def get_vms(self, node: str) -> ApiResponse:
         endpoint = f"nodes/{node}/qemu"
 
-        res = await self.do_get(endpoint)
+        res = await self._do_get(endpoint)
 
         return res
 
     async def get_vm(self, vm_id: int, node: str) -> ApiResponse:
         endpoint = f"nodes/{node}/qemu/{vm_id}/config"
 
-        res = await self.do_get(endpoint)
+        res = await self._do_get(endpoint)
+
+        return res
+
+    async def stop_vm(self, vm_id: int, node: str) -> ApiResponse:
+        endpoint = f"nodes/{node}/qemu/{vm_id}/status/stop"
+
+        res = await self._do_post(endpoint)
+
+        return res
+
+    async def delete_vm(self, vm_id: int, node: str, purge: bool = True, destroy_disks: bool = True) -> ApiResponse:
+        params = []
+        if purge:
+            params.append("purge=1")
+        if destroy_disks:
+            params.append("destroy-unreferenced-disks=1")
+        query = "&".join(params)
+        endpoint = f"nodes/{node}/qemu/{vm_id}{'?' + query if query else ''}"
+
+        res = await self._do_delete(endpoint)
 
         return res

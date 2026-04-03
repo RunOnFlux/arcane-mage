@@ -1,16 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-import gzip
-import importlib.resources as resources
-import tempfile
-import uuid
-from pathlib import Path
-from typing import Any, Callable, Literal
+from collections.abc import Callable
 
-import yaml
-
-from arcane_mage.fat_writer import FAT12Writer
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Horizontal, Vertical
@@ -29,35 +20,32 @@ from textual.widgets import (
     Select,
     Switch,
 )
-from yarl import URL
-
-from ..helpers import do_http
-from ..messages import (
-    UpdateDefaultPage,
-)
+from ..messages import UpdateDefaultPage
 from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
-from ..proxmox import ProxmoxApi
-from ..log import log
+from ..provisioner import Provisioner, get_latest_iso_version
 
 
 class WelcomeScreenProxmox(Screen):
     class AddHypervisor(Message): ...
 
+    class EditHypervisor(Message):
+        def __init__(self, hypervisor: HypervisorConfig) -> None:
+            super().__init__()
+            self.hypervisor = hypervisor
+
     class DelHypervisor(Message):
-        def __init__(self, hypervisor: HypervisorConfig):
+        def __init__(self, hypervisor: HypervisorConfig) -> None:
             super().__init__()
             self.hypervisor = hypervisor
 
     class ProvisionNode(Message):
         def __init__(self, fluxnode: ArcaneOsConfig) -> None:
             super().__init__()
-
             self.fluxnode = fluxnode
 
     class ProvisionAllNodes(Message):
         def __init__(self, delay: int) -> None:
             super().__init__()
-
             self.delay = delay
 
     TITLE = "Proxmox Arcane Fluxnode Creator"
@@ -66,45 +54,7 @@ class WelcomeScreenProxmox(Screen):
     hypervisor_populated = var(False)
     display_table = var(False)
 
-    _images_ref = resources.files("arcane_mage.images")
-
-    # References to compressed images in package
-    efi_gz_resource = _images_ref / "arcane_efi.raw.gz"
-    config_gz_resource = _images_ref / "arcane_config.raw.gz"
-    config_image_base = "arcane_config"
-
-    # The config location on the fluxnode
-    config_file_path = Path("/arcane_config.yaml")
-
-    config_tier_map = {
-        "cumulus": {"memory_mb": "8192", "scsi_gb": "220", "cpu_cores": 4},
-        "nimbus": {"memory_mb": "32768", "scsi_gb": "440", "cpu_cores": 8},
-        "stratus": {"memory_mb": "65536", "scsi_gb": "880", "cpu_cores": 16},
-    }
-
-    proxmox_api: ProxmoxApi
-
-    @staticmethod
-    def is_api_min_version(version: str) -> bool:
-        MIN_VERSION = [8, 4, 1]
-
-        parts = version.split(".")
-
-        if not len(parts) == 3:
-            return False
-
-        for actual_str, required in zip(parts, MIN_VERSION):
-            try:
-                actual = int(actual_str)
-            except ValueError:
-                return False
-
-            if actual > required:
-                return True
-            elif actual < required:
-                return False
-
-        return True
+    provisioner: Provisioner
 
     def __init__(
         self,
@@ -117,104 +67,61 @@ class WelcomeScreenProxmox(Screen):
         self.hypervisors = hypervisors
         self.fluxnodes = fluxnodes
         self.is_homepage = is_homepage
-
         self.latest_iso: str | None = None
 
-    def on_screen_resume(self):
+    def on_screen_resume(self) -> None:
         self.app.set_focus(None)
 
     def on_load(self) -> None:
-        self.get_latest_iso_version()
+        self.fetch_latest_iso()
 
     def on_mount(self) -> None:
-        print(self.fluxnodes)
-
         self.validate_hypervisors()
 
-    def validate_hypervisors(
-        self, hypervisor: HypervisorConfig | None = None
-    ) -> None:
+    def validate_hypervisors(self, hypervisor: HypervisorConfig | None = None) -> None:
         self.first_time = not bool(self.hypervisors)
         self.hypervisor_populated = False
 
         select = self.query_one(Select)
-
-        options = [(URL(x.url).host, x.url) for x in self.hypervisors]
+        options = [(x.display_label, x.url) for x in self.hypervisors]
 
         if hypervisor:
-            value = hypervisor.url
+            select.set_options(options)
+            select.value = hypervisor.url
+        elif options:
+            select.set_options(options)
+            select.value = options[0][1]
         else:
-            value = options[0][1] if options else Select.BLANK
-
-        select.set_options(options)
-        select.value = value
+            select.set_options(options)
+            select.value = Select.BLANK
 
     @work(name="populate_hypervisor")
-    async def populate_hypervisor_api(
-        self, hypervisor: HypervisorConfig
-    ) -> None:
-        url = hypervisor.url
-        api = None
+    async def populate_hypervisor_api(self, hypervisor: HypervisorConfig) -> None:
+        empty = ArcaneOsConfigGroup()
+        empty_provisioned: dict[str, list[dict]] = {}
 
-        useable_nodes = ArcaneOsConfigGroup()
-        provisioned: dict[str, list] = {}
+        provisioner = await Provisioner.from_hypervisor_config(hypervisor)
 
-        credential = hypervisor.real_credential()
-
-        if not credential:
-            self.build_fluxnode_table(useable_nodes, provisioned)
+        if not provisioner:
+            self.build_fluxnode_table(empty, empty_provisioned)
             self.hypervisor_populated = True
-            self.notify("Unable to find credential for Hypervisor")
+            self.notify("Unable to connect to Hypervisor", severity="error")
             return
 
-        if hypervisor.auth_type == "token":
-            if token := ProxmoxApi.parse_token(credential):
-                api = ProxmoxApi.from_token(url, *token)
-        elif hypervisor.auth_type == "userpass":
-            if user_pass := ProxmoxApi.parse_user_pass(credential):
-                api = await ProxmoxApi.from_user_pass(url, *user_pass)
+        self.provisioner = provisioner
 
-        if not api:
-            self.build_fluxnode_table(useable_nodes, provisioned)
+        discovery = await provisioner.discover_nodes(self.fluxnodes)
+
+        if not discovery:
+            self.build_fluxnode_table(empty, empty_provisioned)
             self.hypervisor_populated = True
-            self.notify("No Proxmox API available", severity="error")
+            self.notify("Error discovering hypervisor nodes", severity="error")
             return
 
-        self.proxmox_api = api
-
-        hyper_nodes = await self.proxmox_api.get_hypervisor_nodes()
-
-        if not hyper_nodes:
-            self.build_fluxnode_table(useable_nodes, provisioned)
-            self.hypervisor_populated = True
-            msg = "Timeout" if hyper_nodes.timed_out else hyper_nodes.error
-            self.notify(
-                f"Error getting Hypervisor nodes via api: {msg}",
-                severity="error",
-            )
-            return
-
-        get_vms_coros = []
-
-        async def handle_node(node: dict):
-            if name := node.get("node", None):
-                vm_res = await self.proxmox_api.get_vms(name)
-                provisioned[name] = vm_res.payload
-                useable_nodes.add_nodes(
-                    self.fluxnodes.get_nodes_by_hypervisor_name(name)
-                )
-
-        for node in hyper_nodes.payload:
-            get_vms_coros.append(handle_node(node))
-
-        await asyncio.gather(*get_vms_coros)
-
-        self.build_fluxnode_table(useable_nodes, provisioned)
+        self.build_fluxnode_table(discovery.nodes, discovery.provisioned_vms)
         self.hypervisor_populated = True
 
-    def build_fluxnode_table(
-        self, fluxnodes: ArcaneOsConfigGroup, provisioned_nodes: dict[str, Any]
-    ):
+    def build_fluxnode_table(self, fluxnodes: ArcaneOsConfigGroup, provisioned_nodes: dict[str, list[dict]]) -> None:
         try:
             table = self.query_one(DataTable)
         except NoMatches:
@@ -233,7 +140,6 @@ class WelcomeScreenProxmox(Screen):
         for column in columns:
             table.add_column(**column)
 
-        # this is feral
         for fluxnode in fluxnodes:
             hyper = fluxnode.hypervisor
             row_key = f"{hyper.node}:{hyper.vm_name}"
@@ -266,18 +172,10 @@ class WelcomeScreenProxmox(Screen):
         with Container():
             with Grid():
                 with Horizontal(id="first-column"):
-                    yield Button(
-                        "\u21b0",
-                        id="back",
-                        classes="icon-button",
-                        tooltip="Back",
-                    )
-                    yield Button(
-                        "Add", id="add-hypervisor", tooltip="Add Hypervisor"
-                    )
-                    yield Button(
-                        "Del", id="del-hypervisor", tooltip="Delete Hypervisor"
-                    )
+                    yield Button("\u21b0", id="back", classes="icon-button", tooltip="Back")
+                    yield Button("Add", id="add-hypervisor", tooltip="Add Hypervisor")
+                    yield Button("Edit", id="edit-hypervisor", tooltip="Edit Hypervisor")
+                    yield Button("Del", id="del-hypervisor", tooltip="Delete Hypervisor")
                 with Horizontal(id="second-column"):
                     yield Label("Selected:", classes="text-label")
                     yield Select([])
@@ -288,9 +186,7 @@ class WelcomeScreenProxmox(Screen):
                         value=self.is_homepage,
                         tooltip="Set as default Homepage",
                     )
-                    yield Button(
-                        "X", id="exit", classes="icon-button", tooltip="Exit"
-                    )
+                    yield Button("X", id="exit", classes="icon-button", tooltip="Exit")
             yield Rule()
             with Vertical():
                 yield first_time_dialog
@@ -313,6 +209,12 @@ class WelcomeScreenProxmox(Screen):
 
         if event.button.id == "add-hypervisor":
             self.post_message(WelcomeScreenProxmox.AddHypervisor())
+        elif event.button.id == "edit-hypervisor":
+            select = self.query_one(Select)
+            if select.value == Select.BLANK:
+                return
+            if hyper := self.get_hypervisor_by_url(select.value):
+                self.post_message(WelcomeScreenProxmox.EditHypervisor(hyper))
         elif event.button.id == "del-hypervisor":
             select = self.query_one(Select)
             if select.value == Select.BLANK:
@@ -334,12 +236,9 @@ class WelcomeScreenProxmox(Screen):
         if event.switch.id != "homepage":
             return
 
-        self.post_message(
-            UpdateDefaultPage("welcome-proxmox", event.switch.value)
-        )
+        self.post_message(UpdateDefaultPage("welcome-proxmox", event.switch.value))
 
     def get_provisionable_nodes(self) -> ArcaneOsConfigGroup:
-        # stop doing this. Store the data, so we don't have to get it from the dt
         try:
             dt = self.query_one(DataTable)
         except NoMatches:
@@ -351,9 +250,7 @@ class WelcomeScreenProxmox(Screen):
             row = dt.get_row(row_key)
 
             if not row[-1]:  # not provisioned
-                fluxnode = self.fluxnodes.get_node_by_vm_name(
-                    *row_key.value.split(":")
-                )
+                fluxnode = self.fluxnodes.get_node_by_vm_name(*row_key.value.split(":"))
 
                 if fluxnode:
                     nodes.append(fluxnode)
@@ -370,155 +267,12 @@ class WelcomeScreenProxmox(Screen):
             self.notify(f"Fluxnode: {name} already provisioned")
             return
 
-        # fix this
-        fluxnode = self.fluxnodes.get_node_by_vm_name(
-            *event.row_key.value.split(":")
-        )
+        fluxnode = self.fluxnodes.get_node_by_vm_name(*event.row_key.value.split(":"))
 
         if not fluxnode:
             return
 
         self.post_message(WelcomeScreenProxmox.ProvisionNode(fluxnode))
-
-    async def validate_api_version(self, node: str) -> tuple[bool, str]:
-        res = await self.proxmox_api.get_api_version(node)
-
-        if not res:
-            return False, "Unable to get Proxmox api version"
-
-        version = res.payload.get("version")
-
-        if not version:
-            return False, "Api payload missing version info"
-
-        if not self.is_api_min_version(version):
-            return False, f"Api version too old. Got: {version}, Want: 8.4.1"
-
-        return True, ""
-
-    async def validate_storage(
-        self,
-        node: str,
-        storage_iso: str,
-        storage_images: str,
-        storage_import: str,
-    ) -> tuple[bool, str]:
-        res = await self.proxmox_api.get_storage_state(node)
-
-        if not res:
-            return False, "Unable to get Proxmox storage state"
-
-        if not res.payload:
-            return (
-                False,
-                "No Storage state available, did you forget API permissions?",
-            )
-
-        node_storage_iso = next(
-            filter(lambda x: x.get("storage") == storage_iso, res.payload), None
-        )
-
-        node_storage_images = next(
-            filter(lambda x: x.get("storage") == storage_images, res.payload),
-            None,
-        )
-
-        node_storage_import = next(
-            filter(lambda x: x.get("storage") == storage_import, res.payload),
-            None,
-        )
-
-        if not all(
-            [node_storage_iso, node_storage_images, node_storage_import]
-        ):
-            return False, "Missing storage config item"
-
-        iso_content = node_storage_iso.get("content")
-        images_content = node_storage_images.get("content")
-        import_content = node_storage_import.get("content")
-
-        if (
-            "iso" not in iso_content
-            or "images" not in images_content
-            or "import" not in import_content
-        ):
-            return False, "Storage type missing on hypervisor"
-
-        import_available = node_storage_import.get("avail", 0)
-        import_total = node_storage_import.get("total", 0)
-        import_used = node_storage_import.get("used", 0)
-        used_pct = (import_used / import_total * 100) if import_total else 0
-
-        # We need 4MiB + 4MiB for the EFI image and the config image. So we check for 10MiB
-        if import_available < 10485760:
-            msg = f"Storage '{storage_import}' has less than 10MiB available ({used_pct:.1f}% used)."
-            if used_pct < 100:
-                msg += " Free up space, reduce reserved blocks, or run as root"
-            return False, msg
-
-        # Should really parse these into storage objects and do stuff with them
-
-        # {
-        #     "data": [
-        #         {
-        #         "used": 1561132007424,
-        #         "total": 3651770777600,
-        #         "content": "images,rootdir",
-        #         "enabled": 1,
-        #         "avail": 2090638770176,
-        #         "storage": "local-lvm",
-        #         "used_fraction": 0.4275,
-        #         "type": "lvmthin",
-        #         "active": 1,
-        #         "shared": 0
-        #         },
-        #         {
-        #         "type": "dir",
-        #         "active": 1,
-        #         "shared": 0,
-        #         "used_fraction": 0.941026375512876,
-        #         "storage": "local",
-        #         "avail": 2715500544,
-        #         "enabled": 1,
-        #         "total": 206551633920,
-        #         "content": "import,backup,iso,vztmpl",
-        #         "used": 194370535424
-        #         }
-        #     ]
-        # }
-
-        return True, ""
-
-    async def validate_iso_version(
-        self, node: str, iso_name: str, storage_iso: str
-    ) -> bool:
-        res = await self.proxmox_api.get_storage_content(node, storage_iso)
-
-        if not res:
-            return False
-
-        iso_exists = next(
-            filter(
-                lambda x: x.get("content") == "iso"
-                and x.get("volid", "").endswith(iso_name),
-                res.payload,
-            ),
-            None,
-        )
-
-        return bool(iso_exists)
-
-    async def validate_network(self, node: str, network: str) -> bool:
-        res = await self.proxmox_api.get_networks(node)
-
-        if not res:
-            return False
-
-        network_exists = next(
-            filter(lambda x: x.get("iface") == network, res.payload), None
-        )
-
-        return bool(network_exists)
 
     def get_hypervisor_by_url(self, url: str) -> HypervisorConfig | None:
         return next(filter(lambda x: x.url == url, self.hypervisors), None)
@@ -531,15 +285,8 @@ class WelcomeScreenProxmox(Screen):
             self.populate_hypervisor_api(hypervisor)
 
     @work(name="get_latest_iso_version")
-    async def get_latest_iso_version(self) -> None:
-        url = "https://images.runonflux.io/api/latest_release"
-
-        res = await do_http(url, total_timeout=3)
-
-        if not res:
-            return None
-
-        self.latest_iso = res.get("iso", None)
+    async def fetch_latest_iso(self) -> None:
+        self.latest_iso = await get_latest_iso_version()
 
     @work(name="provision_node")
     async def provision_node(
@@ -548,313 +295,16 @@ class WelcomeScreenProxmox(Screen):
         callback: Callable[[bool, str], None],
         delete_efi: bool = True,
     ) -> bool:
-        hv = fluxnode.hypervisor
-
-        if not hv:
-            return False
-
-        if hv.node_tier not in WelcomeScreenProxmox.config_tier_map:
-            callback(False, f"Node tier: {hv.node_tier} does not exist")
-            return False
-
-        version_valid, version_error = await self.validate_api_version(hv.node)
-
-        if not version_valid:
-            callback(False, version_error)
-            return False
-
-        callback(True, "Api version validated")
-
-        storage_valid, storage_error = await self.validate_storage(
-            hv.node, hv.storage_iso, hv.storage_images, hv.storage_import
-        )
-
-        if not storage_valid:
-            callback(False, storage_error)
-            return False
-
-        callback(True, "Storage validated")
-
-        iso_valid = await self.validate_iso_version(
-            hv.node, hv.iso_name, hv.storage_iso
-        )
-
-        if not iso_valid:
-            callback(False, "Unable to find ISO image on hypervisor")
-            return False
-
-        callback(True, "ISO image validated")
-
-        network_valid = await self.validate_network(hv.node, hv.network)
-
-        if not network_valid:
-            callback(False, "Network not present on hypervisor")
-            return False
-
-        callback(True, "Network validated")
-
-        vm_config = await self.create_vm_config(
-            vm_name=hv.vm_name,
-            vm_id=hv.vm_id,
-            tier=hv.node_tier,
-            network_bridge=hv.network,
-            storage_images=hv.storage_images,
-            storage_iso=hv.storage_iso,
-            storage_import=hv.storage_import,
-            iso_name=hv.iso_name,
-            disk_limit=hv.disk_limit,
-            cpu_limit=hv.cpu_limit,
-            network_limit=hv.network_limit,
-            startup_config=hv.startup_config,
-        )
-
-        if not vm_config:
-            callback(False, "Unable to generate vm config")
-            return False
-
-        vm_id: int = vm_config["vmid"]
-
-        config_upload = yaml.dump({"nodes": [fluxnode.to_dict()]})
-
-        config_ok = await self.upload_arcane_config(
-            config_upload.encode("utf-8"), vm_id, hv.node, hv.storage_import
-        )
-
-        print("CONFIG OK:", config_ok)
-
-        if not config_ok:
-            callback(False, "Unable to upload Config image to hypervisor")
-            return False
-
-        callback(True, "Config image uploaded")
-
-        efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
-
-        print("EFI OK:", efi_ok)
-
-        if not efi_ok:
-            callback(False, "Unable to upload EFI image to hypervisor")
-            return False
-
-        callback(True, "EFI image uploaded")
-
-        created_ok = await self.create_vm(vm_config, node=hv.node)
-
-        print("CREATED OK", created_ok)
-
-        if not created_ok:
-            await self.delete_install_disks(
-                vm_id, hv.node, hv.storage_import, delete_efi
-            )
-            callback(False, "Unable to create VM on hypervisor")
-            return False
-
-        callback(True, "VM Created")
-
-        deleted_ok = await self.delete_install_disks(
-            vm_id, hv.node, hv.storage_import, delete_efi
-        )
-
-        print("DELETED OK", created_ok)
-
-        if not deleted_ok:
-            callback(False, "Unable to clean up disk images on hypervisor")
-            return False
-
-        callback(True, "Disk images cleaned")
-
-        row_key = f"{hv.node}:{hv.vm_name}"
-        table = self.query_one(DataTable)
-        table.update_cell(row_key, "provisioned", True)
-
-        if not hv.start_on_creation:
-            return True
-
-        started_ok = await self.start_vm(vm_id, hv.node)
-
-        print("STARTED OK", created_ok)
-
-        if not started_ok:
-            callback(False, "Unable to start VM on hypervisor")
-            return False
-
-        callback(True, "VM started")
-        return True
-
-    def get_vm_config_file_name(self, vm_id: int) -> str:
-        return f"{vm_id}_{self.config_image_base}.raw"
-
-    async def start_vm(self, vm_id: int, node: str) -> bool:
-        res = await self.proxmox_api.start_vm(vm_id, node)
-
-        if not res:
-            return False
-
-        ok = await self.proxmox_api.wait_for_task(res.payload, node, 20)
-
-        return ok
-
-    async def create_vm(self, config: dict, node: str) -> bool:
-        create_res = await self.proxmox_api.create_vm(config, node)
-
-        if not create_res:
-            log.error(create_res)
-            return False
-
-        ok = await self.proxmox_api.wait_for_task(create_res.payload, node)
-
-        return ok
-
-    async def delete_install_disks(
-        self, vm_id: int, node: str, storage: str, delete_efi: bool = True
-    ) -> bool:
-        efi_file = "arcane_efi.raw"
-        config_file = f"{vm_id}_arcane_config.raw"
-
-        if delete_efi:
-            efi_res = await self.proxmox_api.delete_file(
-                efi_file, node, storage, content="import"
-            )
-        else:
-            efi_res = True
-
-        config_res = await self.proxmox_api.delete_file(
-            config_file, node, storage, content="import"
-        )
-
-        if not efi_res or not config_res:
-            return False
-
-        if delete_efi:
-            efi_ok = await self.proxmox_api.wait_for_task(efi_res.payload, node)
-        else:
-            efi_ok = True
-
-        if not efi_ok:
-            return False
-
-        config_ok = await self.proxmox_api.wait_for_task(
-            config_res.payload, node
-        )
-
-        return config_ok
-
-    async def upload_arcane_efi(self, node: str, storage: str) -> bool:
-        with self.efi_gz_resource.open("rb") as f:
-            efi_disk = gzip.decompress(f.read())
-
-        upload_res = await self.proxmox_api.upload_file(
-            efi_disk,
-            node=node,
-            storage=storage,
-            file_name="arcane_efi.raw",
-        )
-
-        if not upload_res:
-            return False
-
-        ok = await self.proxmox_api.wait_for_task(upload_res.payload, node)
-
-        return ok
-
-    async def upload_arcane_config(
-        self, config: bytes, vm_id: int, node: str, storage: str
-    ) -> bool:
-        with tempfile.TemporaryDirectory(prefix="arcane_mage_") as tmpdir:
-            config_image_name = self.get_vm_config_file_name(vm_id)
-            config_image_path = Path(tmpdir) / config_image_name
-
-            # Extract and decompress the config image template
-            with config_image_path.open("wb") as img_fh:
-                with self.config_gz_resource.open("rb") as img_gz_fh:
-                    img_fh.write(gzip.decompress(img_gz_fh.read()))
-
-            # Modify the FAT filesystem to add the config
-            async with FAT12Writer(config_image_path) as fat_writer:
-                await fat_writer.write_file("arcane_config.yaml", config)
-
-            # Upload the modified image
-            upload_res = await self.proxmox_api.upload_file(
-                config_image_path,
-                node=node,
-                storage=storage,
-            )
-
-        if not upload_res:
-            return False
-
-        ok = await self.proxmox_api.wait_for_task(upload_res.payload, node)
-
-        return ok
-
-    async def create_vm_config(
-        self,
-        vm_name: str,
-        tier: Literal["cumulus", "nimbus", "stratus"],
-        network_bridge: str,
-        storage_images: str = "local-lvm",
-        storage_iso: str = "local",
-        storage_import: str = "local",
-        vm_id: int | None = None,
-        iso_name: str | None = None,
-        startup_config: str | None = None,
-        disk_limit: int | None = None,
-        cpu_limit: float | None = None,
-        network_limit: int | None = None,
-    ) -> dict | None:
-        tier_config = WelcomeScreenProxmox.config_tier_map.get(tier)
-
-        if not tier_config:
-            return None
-
-        if vm_id is None:
-            vm_id_res = await self.proxmox_api.get_next_id()
-
-            if not vm_id_res:
-                return None
-
-            vm_id = vm_id_res.payload
-
-            assert vm_id
-
-        disk_rate = (
-            f"mbps_rd={disk_limit},mbps_wr={disk_limit}," if disk_limit else ""
-        )
-        network_rate = f",rate={network_limit}" if network_limit else ""
-        cpu_limit = cpu_limit or 0
-
-        smbios_uuid = str(uuid.uuid4())
-
-        config_img = self.get_vm_config_file_name(vm_id)
-
-        config = {
-            "efidisk0": f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,import-from={storage_import}:import/arcane_efi.raw",
-            "cpu": "host",
-            "ostype": "l26",
-            "sockets": 1,
-            "vmid": vm_id,
-            "agent": "1",
-            "onboot": 1,
-            "name": vm_name,
-            "smbios1": f"uuid={smbios_uuid}",
-            "boot": "order=scsi0;ide2;net0",
-            "numa": 0,
-            "memory": tier_config["memory_mb"],
-            "tpmstate0": f"{storage_images}:4,version=v2.0",
-            "cores": tier_config["cpu_cores"],
-            "cpulimit": cpu_limit,
-            "bios": "ovmf",
-            "scsi0": f"{storage_images}:{tier_config['scsi_gb']},{disk_rate}discard=on,iothread=1,ssd=1",
-            "scsi1": f"{storage_images}:0,import-from={storage_import}:import/{config_img}",
-            "ide2": f"{storage_iso}:iso/{iso_name},media=cdrom",
-            "net0": f"model=virtio,bridge={network_bridge}{network_rate}",
-            "scsihw": "virtio-scsi-single",
-        }
-
-        if startup_config:
-            config["startup"] = startup_config
-
-        return config
+        result = await self.provisioner.provision_node(fluxnode, callback, delete_efi)
+
+        # Update UI after successful provisioning
+        if result and fluxnode.hypervisor:
+            hv = fluxnode.hypervisor
+            row_key = f"{hv.node}:{hv.vm_name}"
+            table = self.query_one(DataTable)
+            table.update_cell(row_key, "provisioned", True)
+
+        return result
 
     def compute_display_table(self) -> bool:
         return not self.first_time and self.hypervisor_populated

@@ -43,16 +43,15 @@ class ProvisioningInfoScreen(ModalScreen):
         wait_container.visible = False
 
         with main_container:
-            with Container():
-                with Vertical():
-                    yield Label("", id="task-label")
-                    with Horizontal():
-                        yield Spinner("line")
-                        yield ProgressBar(
-                            show_eta=False,
-                            id="task-progress",
-                            total=self.total_steps,
-                        )
+            with Container(), Vertical():
+                yield Label("", id="task-label")
+                with Horizontal():
+                    yield Spinner("line")
+                    yield ProgressBar(
+                        show_eta=False,
+                        id="task-progress",
+                        total=self.total_steps,
+                    )
             yield error_label
             with Horizontal(id="button-container"):
                 yield ok_button

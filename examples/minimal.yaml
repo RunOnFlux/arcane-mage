@@ -2,19 +2,19 @@
 # DHCP, Autoboot, no autostart, no UPnP, no Notifications, No private chain sources
 nodes:
   - hypervisor:
-      node: bigchug
+      node: pve1
       storage_images: local-lvm
       storage_iso: local
       storage_import: local
       network: vmbr0
-      iso_name: FluxLive-1749291196.iso
-      vm_name: graham
+      iso_name: FluxLive-1775071308.iso
+      vm_name: mynode
       node_tier: cumulus
     system:
-      hostname: graham
+      hostname: mynode
     fluxnode:
       identity:
-        flux_id: 122Q5f5dJdiaoNP7iLbBgEt5fVF3g3DDeA
-        identity_key: L4yreKb7oFfok5i38Zi5DZo7vA7wdjrGhs8gdPqNNxdsuNBaywcR
+        flux_id: 1ExampleFluxAddressxxxxxxxxxxxxxxxxxx
+        identity_key: L1ExampleIdentityKeyxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
         output_id: 0
-        tx_id: 657e17cd88d2e7993b62dfc957baedf7b026b0ae31083d30eb7c8851a2dd91ba
+        tx_id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
