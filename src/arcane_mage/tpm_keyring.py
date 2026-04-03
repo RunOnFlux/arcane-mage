@@ -36,7 +36,7 @@ _NV_SIZE = 128
 _TPM_DEVICE = "/dev/tpmrm0"
 
 ESYS_TR_NONE = 0xFFF
-ESYS_TR_PASSWORD = 0x0FF
+ESYS_TR_AUTH_VALUE = 0x0FF
 ESYS_TR_RH_OWNER = 0x101
 
 TPM2_ALG_SHA256 = 0x000B
@@ -229,7 +229,7 @@ class _EsapiContext:
         rc = self._esys.Esys_NV_DefineSpace(
             self._esys_ctx,
             ESYS_TR_RH_OWNER,
-            ESYS_TR_PASSWORD,
+            ESYS_TR_AUTH_VALUE,
             ESYS_TR_NONE,
             ESYS_TR_NONE,
             ctypes.byref(auth),
@@ -248,7 +248,7 @@ class _EsapiContext:
             self._esys_ctx,
             ESYS_TR_RH_OWNER,
             nv_handle,
-            ESYS_TR_PASSWORD,
+            ESYS_TR_AUTH_VALUE,
             ESYS_TR_NONE,
             ESYS_TR_NONE,
             ctypes.byref(buf),
@@ -262,7 +262,7 @@ class _EsapiContext:
             self._esys_ctx,
             ESYS_TR_RH_OWNER,
             nv_handle,
-            ESYS_TR_PASSWORD,
+            ESYS_TR_AUTH_VALUE,
             ESYS_TR_NONE,
             ESYS_TR_NONE,
             size,
@@ -279,7 +279,7 @@ class _EsapiContext:
             self._esys_ctx,
             ESYS_TR_RH_OWNER,
             nv_handle,
-            ESYS_TR_PASSWORD,
+            ESYS_TR_AUTH_VALUE,
             ESYS_TR_NONE,
             ESYS_TR_NONE,
         )
