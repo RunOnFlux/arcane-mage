@@ -145,7 +145,10 @@ options:
     description: UPnP port for FluxNode communication.
     type: int
   router_address:
-    description: Router IP for UPnP (required if upnp_port is set).
+    description: >
+      Router IP for UPnP. Pass an empty string to explicitly clear the field
+      when UPnP is not used — some daemon versions require the key to be
+      present as a string.
     type: str
   notifications:
     description: >
@@ -241,13 +244,16 @@ def build_config_dict(params):
         },
     }
 
-    # UPnP network config
+    # Fluxnode network config — upnp_port and router_address are independent.
+    # Use `is not None` so empty-string router_address (the "UPnP disabled"
+    # sentinel for public-IP nodes) is preserved instead of being dropped.
+    network = {}
     if params.get("upnp_port"):
-        fluxnode["network"] = {
-            "upnp_port": params["upnp_port"],
-        }
-        if params.get("router_address"):
-            fluxnode["network"]["router_address"] = params["router_address"]
+        network["upnp_port"] = params["upnp_port"]
+    if params.get("router_address") is not None:
+        network["router_address"] = params["router_address"]
+    if network:
+        fluxnode["network"] = network
 
     # Notifications
     if params.get("notifications"):
