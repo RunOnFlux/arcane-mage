@@ -1,0 +1,21 @@
+namespace: runonflux
+name: arcane_mage
+version: 1.0.0
+readme: README.md
+authors:
+  - RunOnFlux <info@runonflux.io>
+description: Ansible collection for provisioning ArcaneOS FluxNodes on Proxmox via arcane-mage
+license_file: ../../../LICENSE
+tags:
+  - proxmox
+  - fluxnode
+  - arcaneos
+  - provisioning
+  - automation
+repository: https://github.com/RunOnFlux/arcane-mage
+documentation: https://github.com/RunOnFlux/arcane-mage
+homepage: https://runonflux.com
+issues: https://github.com/RunOnFlux/arcane-mage/issues
+build_ignore:
+  - "*.pyc"
+  - __pycache__
