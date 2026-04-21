@@ -300,6 +300,24 @@ class ProxmoxApi:
 
         return res
 
+    async def get_cluster_status(self) -> ApiResponse:
+        """GET /cluster/status — cluster name, quorum, node membership."""
+        res = await self._do_get("cluster/status")
+
+        return res
+
+    async def get_cluster_resources(
+        self, resource_type: str | None = None
+    ) -> ApiResponse:
+        """GET /cluster/resources — cluster-wide VM/storage/node list."""
+        path = "cluster/resources"
+        if resource_type:
+            path += f"?type={resource_type}"
+
+        res = await self._do_get(path)
+
+        return res
+
     async def get_hypervisor_nodes(self) -> ApiResponse:
         res = await self._do_get("nodes")
 

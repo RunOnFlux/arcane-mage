@@ -110,6 +110,24 @@ class WelcomeScreenProxmox(Screen):
 
         self.provisioner = provisioner
 
+        # Update cluster info display
+        cluster_label = self.query_one("#cluster-info", Label)
+        if provisioner.cluster:
+            c = provisioner.cluster
+            quorum_str = "ok" if c.has_quorum else "LOST"
+            node_count = len(c.nodes)
+            cluster_label.update(
+                f"Cluster: {c.cluster_name} | Nodes: {node_count} | Quorum: {quorum_str}"
+            )
+            cluster_label.display = True
+
+            if not c.has_quorum:
+                self.notify("Cluster has lost quorum — provisioning disabled", severity="warning")
+                sync_btn = self.query_one("#sync-all", Button)
+                sync_btn.disabled = True
+        else:
+            cluster_label.display = False
+
         discovery = await provisioner.discover_nodes(self.fluxnodes)
 
         if not discovery:
@@ -133,6 +151,7 @@ class WelcomeScreenProxmox(Screen):
             {"label": "Tier", "key": "tier"},
             {"label": "Network", "key": "network"},
             {"label": "Address", "key": "address"},
+            {"label": "Status", "key": "status"},
             {"label": "Provisioned", "key": "provisioned"},
         ]
 
@@ -140,11 +159,13 @@ class WelcomeScreenProxmox(Screen):
         for column in columns:
             table.add_column(**column)
 
+        cluster = getattr(self, "provisioner", None) and self.provisioner.cluster
+
         for fluxnode in fluxnodes:
             hyper = fluxnode.hypervisor
             row_key = f"{hyper.node}:{hyper.vm_name}"
 
-            hypervisor_nodes = provisioned_nodes.get(hyper.node, [])
+            hypervisor_nodes = provisioned_nodes.get(hyper.node) or []
 
             is_provisioned = bool(
                 next(
@@ -155,7 +176,12 @@ class WelcomeScreenProxmox(Screen):
                     None,
                 )
             )
-            table.add_row(*fluxnode.as_row(), is_provisioned, key=row_key)
+
+            node_status = ""
+            if cluster:
+                node_status = "online" if cluster.is_node_online(hyper.node) else "offline"
+
+            table.add_row(*fluxnode.as_row(), node_status, is_provisioned, key=row_key)
 
     def compose(self) -> ComposeResult:
         first_time_dialog = Label(
@@ -188,6 +214,9 @@ class WelcomeScreenProxmox(Screen):
                     )
                     yield Button("X", id="exit", classes="icon-button", tooltip="Exit")
             yield Rule()
+            cluster_info = Label("", id="cluster-info")
+            cluster_info.display = False
+            yield cluster_info
             with Vertical():
                 yield first_time_dialog
                 with Vertical(id="dt-container"):
@@ -294,8 +323,11 @@ class WelcomeScreenProxmox(Screen):
         fluxnode: ArcaneOsConfig,
         callback: Callable[[bool, str], None],
         delete_efi: bool = True,
+        skip_efi_upload: bool = False,
     ) -> bool:
-        result = await self.provisioner.provision_node(fluxnode, callback, delete_efi)
+        result = await self.provisioner.provision_node(
+            fluxnode, callback, delete_efi, skip_efi_upload=skip_efi_upload
+        )
 
         # Update UI after successful provisioning
         if result and fluxnode.hypervisor:

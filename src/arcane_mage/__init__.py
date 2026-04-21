@@ -1,6 +1,10 @@
 """arcane-mage: Fluxnode provisioning library and tools."""
 
+from .batch import BatchProvisioner, BatchResult, NodePlan
 from .models import (
+    ClusterContext,
+    ClusterNode,
+    ClusterStorage,
     AddressConfig,
     ArcaneCreatorConfig,
     ArcaneOsConfig,
@@ -23,6 +27,12 @@ from .provisioner import TIER_CONFIG, HypervisorDiscovery, Provisioner, get_late
 from .proxmox import ApiResponse, ParsedToken, ParsedUserPass, ProxmoxApi, ResolvedConnection
 
 __all__ = [
+    "BatchProvisioner",
+    "BatchResult",
+    "ClusterContext",
+    "ClusterNode",
+    "ClusterStorage",
+    "NodePlan",
     "TIER_CONFIG",
     "AddressConfig",
     "ApiResponse",
