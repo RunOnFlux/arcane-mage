@@ -9,6 +9,7 @@ from textual.app import App
 from textual.screen import Screen
 from textual.worker import Worker, WorkerCancelled
 
+from .batch import BatchProvisioner
 from .messages import ScreenRequested, UpdateDefaultPage
 from .models import (
     ArcaneCreatorConfig,
@@ -77,7 +78,10 @@ class ArcaneMage(App):
         screen.validate_hypervisors()
 
     async def provision_node_callback(
-        self, fluxnode: ArcaneOsConfig | None, delete_efi: bool = True
+        self,
+        fluxnode: ArcaneOsConfig | None,
+        delete_efi: bool = True,
+        skip_efi_upload: bool = False,
     ) -> Worker | None:
         if not fluxnode or not fluxnode.hypervisor:
             return None
@@ -97,6 +101,7 @@ class ArcaneMage(App):
             fluxnode,
             callback=info_screen.update_callback,
             delete_efi=delete_efi,
+            skip_efi_upload=skip_efi_upload,
         )
 
         return worker
@@ -198,7 +203,18 @@ class ArcaneMage(App):
 
         hashed_password = configured_node.system.hashed_console
 
-        worker = await self.provision_node_callback(configured_node)
+        # Build a cluster-aware batch plan for EFI upload/delete optimization
+        batch = BatchProvisioner(screen.provisioner, screen.provisioner.cluster)
+        plan = batch._build_plan(list(provisionable_nodes))
+
+        # First node uses plan[0] flags
+        first_plan = plan[0] if plan else None
+
+        worker = await self.provision_node_callback(
+            configured_node,
+            delete_efi=first_plan.delete_efi if first_plan else True,
+            skip_efi_upload=first_plan.skip_efi_upload if first_plan else False,
+        )
 
         if not worker:
             return
@@ -224,14 +240,18 @@ class ArcaneMage(App):
             self.pop_screen()
 
         # we leave the info screen to display on error, otherwise pop
-        for fluxnode in provisionable_nodes.rest:
+        for i, fluxnode in enumerate(provisionable_nodes.rest):
             needs_pop = True
             fluxnode.system.hashed_console = hashed_password
 
             last = fluxnode == provisionable_nodes.last
+            # plan index is i+1 since plan[0] was the first node
+            node_plan = plan[i + 1] if i + 1 < len(plan) else None
 
             worker = await self.provision_node_callback(
-                fluxnode, delete_efi=last
+                fluxnode,
+                delete_efi=node_plan.delete_efi if node_plan else last,
+                skip_efi_upload=node_plan.skip_efi_upload if node_plan else False,
             )
 
             if not worker:

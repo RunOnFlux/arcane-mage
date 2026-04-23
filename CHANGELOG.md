@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **Proxmox cluster support**: detect cluster membership on connection; run pre-flight checks (quorum, target node online, cluster-wide VM name uniqueness) before provisioning. Backwards compatible — standalone Proxmox servers behave identically.
+- **`ClusterContext` model** (`models/cluster.py`): topology detection, per-node online/offline status, shared-vs-local storage queries.
+- **`BatchProvisioner`** (`batch.py`): orchestrates provisioning across multiple cluster nodes with EFI upload dedup on shared storage and failure recovery.
+- **`Provisioner.detect_cluster()`**: populates cluster context during construction; returns `None` for standalone Proxmox servers.
+- **`HypervisorConfig.force_standalone`**: escape hatch to skip cluster detection on a specific hypervisor.
+- **TUI**: cluster info label (name, node count, quorum state), new "Status" column showing node online/offline, quorum-lost warning disables provisioning.
+- **CLI**: `provision` integrates `BatchProvisioner`; JSON output shape unchanged; new "Cluster pre-flight checks passed" step reported alongside existing steps.
+
+### Fixed
+
+- **`ProxmoxApi.get_vms()`**: returned `payload=None` for offline cluster nodes, causing `build_fluxnode_table` to crash with `TypeError: 'NoneType' object is not iterable`. `discover_nodes()` now coerces `None → []` with defensive guards in `welcome_proxmox.py` and `__main__.py`. Regression test added.
+- **CLI provision summary**: "Provisioned successfully"/"Provisioning failed" lines were printed in a trailing loop, stacking under the last node's block. Each summary is now prefixed with `{hostname}:` and self-describing per node.
+
 ## 2.0.0
 
 ### Breaking Changes

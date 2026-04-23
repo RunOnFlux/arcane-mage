@@ -21,7 +21,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .models import ArcaneCreatorConfig, ArcaneOsConfigGroup
+from .batch import BatchProvisioner
+from .models import ArcaneCreatorConfig, ArcaneOsConfig, ArcaneOsConfigGroup
 from .proxmox import ProxmoxApi, ResolvedConnection
 
 app = typer.Typer(
@@ -232,6 +233,7 @@ def provision(
     async def run():
         async with ProxmoxApi.from_token(conn.url, conn.token) as api:
             provisioner = Provisioner(api)
+            await provisioner.detect_cluster()
 
             nodes = list(configs)
             if node_filter:
@@ -240,35 +242,41 @@ def provision(
             if not nodes:
                 raise CliError(f"No nodes match filter '{node_filter}'")
 
-            results = []
-            all_ok = True
+            # Apply --start/--no-start override before batching
             for node in nodes:
-                hostname = node.system.hostname
-
                 if start is not None and node.hypervisor:
                     node.hypervisor.start_on_creation = start
 
-                steps: list[dict[str, object]] = []
+            # Per-node step tracking for JSON output
+            node_steps: dict[str, list[dict[str, object]]] = {}
 
-                def callback(ok: bool, msg: str):
-                    steps.append({"ok": ok, "message": msg})
+            def batch_callback(fluxnode: ArcaneOsConfig, ok: bool, msg: str):
+                hostname = fluxnode.system.hostname
+                if hostname not in node_steps:
+                    node_steps[hostname] = []
                     if not use_json:
-                        mark = _CHECK_MARK if ok else _CROSS_MARK
-                        console.print(f"  {mark} {msg}")
+                        console.print(f"\n[bold]{hostname}[/bold]")
+                node_steps[hostname].append({"ok": ok, "message": msg})
+                if not use_json:
+                    mark = _CHECK_MARK if ok else _CROSS_MARK
+                    console.print(f"  {mark} {msg}")
+
+            batch = BatchProvisioner(provisioner, provisioner.cluster)
+            batch_results = await batch.provision_batch(nodes, callback=batch_callback)
+
+            results = []
+            all_ok = True
+            for br in batch_results:
+                hostname = br.fluxnode.system.hostname
+                results.append({"hostname": hostname, "ok": br.ok, "steps": node_steps.get(hostname, [])})
 
                 if not use_json:
-                    console.print(f"\n[bold]{hostname}[/bold]")
-
-                result = await provisioner.provision_node(node, callback=callback)
-                results.append({"hostname": hostname, "ok": result, "steps": steps})
-
-                if not use_json:
-                    if result:
-                        console.print(f"  [bold green]Provisioned successfully[/bold green]")
+                    if br.ok:
+                        console.print(f"[bold green]{hostname}: Provisioned successfully[/bold green]")
                     else:
-                        console.print(f"  [bold red]Provisioning failed[/bold red]")
+                        console.print(f"[bold red]{hostname}: Provisioning failed[/bold red]")
 
-                if not result:
+                if not br.ok:
                     all_ok = False
 
             if use_json:
@@ -687,7 +695,7 @@ def status(
                     continue
 
                 provisioned = False
-                vms = discovery.provisioned_vms.get(hyper.node, [])
+                vms = discovery.provisioned_vms.get(hyper.node) or []
                 for vm in vms:
                     if vm.get("name") == hyper.vm_name:
                         provisioned = True

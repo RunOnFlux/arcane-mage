@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from arcane_mage.models import ArcaneOsConfigGroup
 from arcane_mage.provisioner import TIER_CONFIG, Provisioner, is_api_min_version
 from arcane_mage.proxmox import ApiResponse
 
@@ -286,3 +287,29 @@ class TestProvisionerValidation:
 
         assert result is False
         assert any("not found" in msg for _, msg in messages)
+
+    async def test_discover_nodes_offline_node_returns_empty_list(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """Offline cluster nodes return payload=None from get_vms; discover_nodes
+        must coerce that to [] so downstream callers can iterate safely.
+        Regression: bare None leaked through and crashed build_fluxnode_table."""
+        mock_api.get_hypervisor_nodes.return_value = ApiResponse(
+            status=200,
+            payload=[{"node": "online-node"}, {"node": "offline-node"}],
+        )
+
+        async def get_vms_side_effect(name: str) -> ApiResponse:
+            if name == "offline-node":
+                return ApiResponse(status=200, payload=None)
+            return ApiResponse(status=200, payload=[{"vmid": 100, "name": "vm1"}])
+
+        mock_api.get_vms.side_effect = get_vms_side_effect
+
+        discovery = await provisioner.discover_nodes(ArcaneOsConfigGroup())
+
+        assert discovery is not None
+        assert discovery.provisioned_vms["offline-node"] == []
+        assert discovery.provisioned_vms["online-node"] == [{"vmid": 100, "name": "vm1"}]
+        for vms in discovery.provisioned_vms.values():
+            assert vms is not None

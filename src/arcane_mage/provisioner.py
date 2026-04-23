@@ -14,6 +14,7 @@ import yaml
 from .fat_writer import FAT12Writer
 from .helpers import do_http
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
+from .models.cluster import ClusterContext
 from .proxmox import ProxmoxApi
 
 log = logging.getLogger(__name__)
@@ -114,8 +115,9 @@ class HypervisorDiscovery:
 class Provisioner:
     """Orchestrates Proxmox VM provisioning for Fluxnodes."""
 
-    def __init__(self, api: ProxmoxApi) -> None:
+    def __init__(self, api: ProxmoxApi, cluster: ClusterContext | None = None) -> None:
         self.api = api
+        self.cluster = cluster
 
     @classmethod
     async def from_hypervisor_config(cls, config: HypervisorConfig) -> Self | None:
@@ -137,7 +139,34 @@ class Provisioner:
         if not api:
             return None
 
-        return cls(api)
+        cluster: ClusterContext | None = None
+        if not config.force_standalone:
+            status_res = await api.get_cluster_status()
+            storage_res = await api.get_storage_config()
+            if status_res and storage_res:
+                ctx = ClusterContext.from_api_responses(
+                    status_res.payload, storage_res.payload
+                )
+                if ctx.is_cluster:
+                    cluster = ctx
+
+        return cls(api, cluster=cluster)
+
+    async def detect_cluster(self) -> None:
+        """Detect cluster topology and set ``self.cluster``.
+
+        Called automatically by ``from_hypervisor_config()``. Call this
+        explicitly when constructing a ``Provisioner`` directly via
+        ``Provisioner(api)``.
+        """
+        status_res = await self.api.get_cluster_status()
+        storage_res = await self.api.get_storage_config()
+        if status_res and storage_res:
+            ctx = ClusterContext.from_api_responses(
+                status_res.payload, storage_res.payload
+            )
+            if ctx.is_cluster:
+                self.cluster = ctx
 
     async def discover_nodes(
         self, all_configs: ArcaneOsConfigGroup
@@ -157,7 +186,7 @@ class Provisioner:
         async def handle_node(node: dict) -> None:
             if name := node.get("node"):
                 vm_res = await self.api.get_vms(name)
-                provisioned[name] = vm_res.payload
+                provisioned[name] = vm_res.payload or []
                 useable_nodes.add_nodes(all_configs.get_nodes_by_hypervisor_name(name))
 
         await asyncio.gather(*(handle_node(n) for n in hyper_nodes.payload))
@@ -547,6 +576,7 @@ class Provisioner:
         fluxnode: ArcaneOsConfig,
         callback: Callable[[bool, str], None] | None = None,
         delete_efi: bool = True,
+        skip_efi_upload: bool = False,
     ) -> bool:
         """Provision a single Fluxnode VM on a Proxmox hypervisor.
 
@@ -571,6 +601,31 @@ class Provisioner:
         if hv.node_tier not in TIER_CONFIG:
             _cb(False, f"Node tier: {hv.node_tier} does not exist")
             return False
+
+        if self.cluster:
+            if not self.cluster.has_quorum:
+                _cb(False, "Cluster has lost quorum, refusing to provision")
+                return False
+
+            if not self.cluster.is_node_online(hv.node):
+                _cb(False, f"Node '{hv.node}' is offline in cluster")
+                return False
+
+            resources_res = await self.api.get_cluster_resources(resource_type="vm")
+            if resources_res and isinstance(resources_res.payload, list):
+                duplicate = next(
+                    (r for r in resources_res.payload if r.get("name") == hv.vm_name),
+                    None,
+                )
+                if duplicate:
+                    existing_node = duplicate.get("node", "unknown")
+                    _cb(
+                        False,
+                        f"VM name '{hv.vm_name}' already exists on node '{existing_node}'",
+                    )
+                    return False
+
+            _cb(True, "Cluster pre-flight checks passed")
 
         version_valid, version_error = await self.validate_api_version(hv.node)
 
@@ -637,13 +692,16 @@ class Provisioner:
 
         _cb(True, "Config image uploaded")
 
-        efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
+        if skip_efi_upload:
+            _cb(True, "EFI image upload skipped (shared storage)")
+        else:
+            efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
 
-        if not efi_ok:
-            _cb(False, "Unable to upload EFI image to hypervisor")
-            return False
+            if not efi_ok:
+                _cb(False, "Unable to upload EFI image to hypervisor")
+                return False
 
-        _cb(True, "EFI image uploaded")
+            _cb(True, "EFI image uploaded")
 
         created_ok = await self.create_vm(vm_config, node=hv.node)
 

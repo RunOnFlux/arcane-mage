@@ -25,6 +25,7 @@ class HypervisorConfig:
     credential: str = Field(repr=False)
     keychain: bool = True
     name: str | None = None
+    force_standalone: bool = False
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, HypervisorConfig):
