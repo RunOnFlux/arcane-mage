@@ -394,6 +394,15 @@ class ProxmoxApi:
         return res
 
     async def get_task(self, task_id: str, node: str) -> ApiResponse:
+        # UPID format: "UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:"
+        # The task runs on whichever node's pveproxy accepted the request, which
+        # in cluster setups may differ from the caller's target node (e.g. uploads
+        # run on the connection node, not hv.node). Extract the real task node
+        # from the UPID so the status endpoint path matches.
+        upid_parts = task_id.split(":")
+        if len(upid_parts) >= 2 and upid_parts[0] == "UPID" and upid_parts[1]:
+            node = upid_parts[1]
+
         quoted_task = urllib.parse.quote(task_id)
         endpoint = f"nodes/{node}/tasks/{quoted_task}/status"
 
