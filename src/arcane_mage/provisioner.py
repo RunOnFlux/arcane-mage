@@ -681,6 +681,9 @@ class Provisioner:
             return False
 
         vm_id = vm_config.vmid
+        # Surface the resolved vmid back onto the config so callers (CLI --json,
+        # downstream automation) can capture it even when it was auto-assigned.
+        hv.vm_id = vm_id
 
         config_upload = yaml.dump({"nodes": [fluxnode.to_dict()]})
 

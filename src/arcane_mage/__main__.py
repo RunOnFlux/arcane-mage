@@ -268,7 +268,8 @@ def provision(
             all_ok = True
             for br in batch_results:
                 hostname = br.fluxnode.system.hostname
-                results.append({"hostname": hostname, "ok": br.ok, "steps": node_steps.get(hostname, [])})
+                vm_id = br.fluxnode.hypervisor.vm_id if br.fluxnode.hypervisor else None
+                results.append({"hostname": hostname, "ok": br.ok, "vm_id": vm_id, "steps": node_steps.get(hostname, [])})
 
                 if not use_json:
                     if br.ok:
@@ -280,7 +281,12 @@ def provision(
                     all_ok = False
 
             if use_json:
-                print(_json_ok({"nodes": results}) if all_ok else _json_error("Provisioning failed", {"nodes": results}))
+                payload: dict = {"nodes": results}
+                # Convenience for single-node provisions (the marketplace agent path):
+                # also surface vm_id at the top level so callers don't dig into nodes[].
+                if len(results) == 1 and results[0].get("vm_id") is not None:
+                    payload["vm_id"] = results[0]["vm_id"]
+                print(_json_ok(payload) if all_ok else _json_error("Provisioning failed", payload))
 
             return all_ok
 
