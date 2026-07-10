@@ -647,6 +647,56 @@ def ping(
         raise typer.Exit(1)
 
 
+@app.command(name="refresh-iso")
+def refresh_iso(
+    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    node: str = typer.Option(..., "--node", help="Cluster node to target (e.g. pve1)"),
+    storage_iso: str = typer.Option(..., "--storage-iso", help="ISO storage on the hypervisor"),
+    current_iso: Optional[str] = typer.Option(None, "--current-iso", help="Currently-adopted ISO name, for reporting"),
+    use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
+) -> None:
+    """Check the RunOnFlux release feed for a newer ArcaneOS/FluxLive ISO and stage it if needed."""
+    from dataclasses import asdict
+
+    from .provisioner import Provisioner
+
+    try:
+        conn = _resolve_connection(url, token, hypervisor)
+    except CliError as e:
+        _handle_error(e, use_json)
+
+    async def run():
+        async with ProxmoxApi.from_token(conn.url, conn.token) as api:
+            provisioner = Provisioner(api)
+            return await provisioner.refresh_iso(node, storage_iso, current_iso=current_iso)
+
+    try:
+        result = asyncio.run(run())
+    except CliError as e:
+        _handle_error(e, use_json)
+        return
+
+    data = asdict(result)
+
+    if use_json:
+        print(_json_ok(data) if result.ok else _json_error(result.error or "ISO refresh failed", data))
+    else:
+        if result.ok and result.changed:
+            body = f'[green]Staged {result.iso}[/green] (build {result.build}, {result.severity} severity, "{result.release}")'
+            console.print(Panel(body, title="[bold]ISO Refreshed[/bold]", border_style="green"))
+        elif result.ok:
+            body = f"[dim]{result.iso} already staged[/dim]"
+            console.print(Panel(body, title="[bold]Up to date[/bold]", border_style="green"))
+        else:
+            body = f"[red]{result.error}[/red]"
+            console.print(Panel(body, title="[bold red]Refresh Failed[/bold red]", border_style="red"))
+
+    if not result.ok:
+        raise typer.Exit(1)
+
+
 @app.command()
 def status(
     url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),

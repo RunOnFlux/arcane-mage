@@ -453,6 +453,7 @@ class ProxmoxApi:
         node: str,
         storage: str,
         file_name: str | None = None,
+        content: str = "import",
     ) -> ApiResponse:
         endpoint = f"nodes/{node}/storage/{storage}/upload"
 
@@ -476,7 +477,7 @@ class ProxmoxApi:
             # packet capture and decode the ssl traffic with wireshark. The multipart data
             # has to be in this specific order, as well as the headers have to be in order.
             with aiohttp.MultipartWriter("form-data") as mpwriter:
-                content_part = mpwriter.append(b"import")
+                content_part = mpwriter.append(content.encode())
                 content_part.set_content_disposition("form-data", name="content")
 
                 file_part = mpwriter.append(payload)
