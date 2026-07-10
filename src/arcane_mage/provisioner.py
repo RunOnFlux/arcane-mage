@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import hashlib
 import importlib.resources as resources
 import logging
 import tempfile
@@ -12,7 +13,7 @@ from typing import Literal, Self
 import yaml
 
 from .fat_writer import FAT12Writer
-from .helpers import do_http
+from .helpers import do_http, do_http_to_file
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from .models.cluster import ClusterContext
 from .proxmox import ProxmoxApi
@@ -102,6 +103,46 @@ async def get_latest_iso_version() -> str | None:
         return None
 
     return res.get("iso")
+
+
+_ARCANE_RELEASE_API = "https://images.runonflux.io/arcane/api/latest_release"
+_ARCANE_RELEASE_BASE = "https://images.runonflux.io/arcane/releases"
+
+
+async def _sha256_file(path: Path) -> str:
+    """Compute the sha256 hex digest of a file without blocking the event loop."""
+
+    def _hash() -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(16 * 1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    return await asyncio.to_thread(_hash)
+
+
+def _parse_sha256sum_line(sums_text: str, file_name: str) -> str | None:
+    """Find `file_name`'s expected hash in a `sha256sum`-format checksum file."""
+    for line in sums_text.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[1].strip().lstrip("*") == file_name:
+            return parts[0]
+    return None
+
+
+@dataclass
+class IsoRefreshResult:
+    """Result of checking for (and possibly staging) a newer ArcaneOS/FluxLive ISO."""
+
+    ok: bool
+    changed: bool = False
+    iso: str | None = None
+    previous: str | None = None
+    build: str | None = None
+    severity: str | None = None
+    release: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -270,6 +311,76 @@ class Provisioner:
         )
 
         return bool(iso_exists)
+
+    async def refresh_iso(
+        self, node: str, storage_iso: str, current_iso: str | None = None
+    ) -> IsoRefreshResult:
+        """Check the RunOnFlux release feed for a newer ArcaneOS/FluxLive ISO and,
+        if the hypervisor doesn't already have it staged, download + checksum-verify
+        + upload it to `storage_iso`. No-ops (changed=False) if already current.
+        """
+        release = await do_http(_ARCANE_RELEASE_API, total_timeout=10)
+
+        if not release or not isinstance(release, dict):
+            return IsoRefreshResult(ok=False, error="Unable to fetch latest release info")
+
+        iso_name = release.get("iso")
+        build = release.get("build")
+        severity = release.get("severity")
+        release_name = release.get("release")
+        checksums_name = release.get("checksums")
+
+        if not iso_name or not build or not checksums_name:
+            return IsoRefreshResult(ok=False, error=f"Malformed release response: {release}")
+
+        if await self.validate_iso_version(node, iso_name, storage_iso):
+            return IsoRefreshResult(
+                ok=True, changed=False, iso=iso_name, build=build, severity=severity, release=release_name
+            )
+
+        base = f"{_ARCANE_RELEASE_BASE}/{build}"
+
+        with tempfile.TemporaryDirectory(prefix="arcane_mage_iso_") as tmpdir:
+            iso_path = Path(tmpdir) / iso_name
+            sums_path = Path(tmpdir) / checksums_name
+
+            if not await do_http_to_file(f"{base}/{iso_name}", iso_path, read_timeout=1200):
+                return IsoRefreshResult(ok=False, error=f"Failed to download {iso_name}", build=build)
+
+            if not await do_http_to_file(f"{base}/{checksums_name}", sums_path, read_timeout=60):
+                return IsoRefreshResult(ok=False, error=f"Failed to download {checksums_name}", build=build)
+
+            expected_hash = _parse_sha256sum_line(sums_path.read_text(), iso_name)
+
+            if not expected_hash:
+                return IsoRefreshResult(
+                    ok=False, error=f"{iso_name} not listed in {checksums_name}", build=build
+                )
+
+            actual_hash = await _sha256_file(iso_path)
+
+            if actual_hash != expected_hash:
+                return IsoRefreshResult(ok=False, error=f"Checksum mismatch for {iso_name}", build=build)
+
+            upload_res = await self.api.upload_file(
+                iso_path, node=node, storage=storage_iso, file_name=iso_name, content="iso"
+            )
+
+            if not upload_res:
+                return IsoRefreshResult(ok=False, error=f"Upload of {iso_name} failed", build=build)
+
+            if not await self.api.wait_for_task(upload_res.payload, node, max_wait_s=120):
+                return IsoRefreshResult(ok=False, error=f"Upload of {iso_name} did not complete", build=build)
+
+        return IsoRefreshResult(
+            ok=True,
+            changed=True,
+            iso=iso_name,
+            previous=current_iso,
+            build=build,
+            severity=severity,
+            release=release_name,
+        )
 
     async def validate_network(self, node: str, network: str) -> bool:
         """Validate that the specified network bridge exists on the hypervisor."""

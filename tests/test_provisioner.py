@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from unittest.mock import AsyncMock
 
 import pytest
@@ -313,3 +314,139 @@ class TestProvisionerValidation:
         assert discovery.provisioned_vms["online-node"] == [{"vmid": 100, "name": "vm1"}]
         for vms in discovery.provisioned_vms.values():
             assert vms is not None
+
+
+class TestRefreshIso:
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock) -> Provisioner:
+        return Provisioner(api=mock_api)
+
+    @staticmethod
+    def _release(**overrides) -> dict:
+        base = {
+            "iso": "FluxLive-111.iso",
+            "build": "111",
+            "severity": "low",
+            "release": "test release",
+            "checksums": "sums-111.sha256",
+        }
+        base.update(overrides)
+        return base
+
+    async def test_already_staged_is_a_no_op(
+        self, provisioner: Provisioner, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            "arcane_mage.provisioner.do_http", AsyncMock(return_value=self._release())
+        )
+        mock_api.get_storage_content.return_value = ApiResponse(
+            status=200,
+            payload=[{"content": "iso", "volid": "local:iso/FluxLive-111.iso"}],
+        )
+
+        result = await provisioner.refresh_iso("node1", "local")
+
+        assert result.ok is True
+        assert result.changed is False
+        assert result.iso == "FluxLive-111.iso"
+        mock_api.upload_file.assert_not_called()
+
+    async def test_unreachable_release_feed(self, provisioner: Provisioner, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr("arcane_mage.provisioner.do_http", AsyncMock(return_value=None))
+
+        result = await provisioner.refresh_iso("node1", "local")
+
+        assert result.ok is False
+        assert result.error is not None
+
+    async def test_malformed_release_response(self, provisioner: Provisioner, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "arcane_mage.provisioner.do_http",
+            AsyncMock(return_value=self._release(checksums=None)),
+        )
+
+        result = await provisioner.refresh_iso("node1", "local")
+
+        assert result.ok is False
+        assert "Malformed" in result.error
+
+    async def test_downloads_verifies_and_uploads_when_stale(
+        self, provisioner: Provisioner, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ):
+        iso_bytes = b"fake-iso-bytes"
+        digest = hashlib.sha256(iso_bytes).hexdigest()
+
+        monkeypatch.setattr(
+            "arcane_mage.provisioner.do_http",
+            AsyncMock(return_value=self._release(iso="FluxLive-222.iso", build="222", checksums="sums-222.sha256")),
+        )
+        mock_api.get_storage_content.return_value = ApiResponse(status=200, payload=[])
+
+        async def fake_download(url: str, dest_path, **kwargs) -> bool:
+            if dest_path.name == "FluxLive-222.iso":
+                dest_path.write_bytes(iso_bytes)
+            else:
+                dest_path.write_text(f"{digest}  FluxLive-222.iso\n")
+            return True
+
+        monkeypatch.setattr("arcane_mage.provisioner.do_http_to_file", fake_download)
+        mock_api.upload_file.return_value = ApiResponse(status=200, payload="UPID:task")
+        mock_api.wait_for_task.return_value = True
+
+        result = await provisioner.refresh_iso("node1", "local", current_iso="FluxLive-111.iso")
+
+        assert result.ok is True
+        assert result.changed is True
+        assert result.iso == "FluxLive-222.iso"
+        assert result.previous == "FluxLive-111.iso"
+        assert result.build == "222"
+        mock_api.upload_file.assert_awaited_once()
+        _, kwargs = mock_api.upload_file.call_args
+        assert kwargs["content"] == "iso"
+        assert kwargs["file_name"] == "FluxLive-222.iso"
+        mock_api.wait_for_task.assert_awaited_once()
+
+    async def test_checksum_mismatch_fails_closed(
+        self, provisioner: Provisioner, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            "arcane_mage.provisioner.do_http",
+            AsyncMock(return_value=self._release(iso="FluxLive-333.iso", build="333", checksums="sums-333.sha256")),
+        )
+        mock_api.get_storage_content.return_value = ApiResponse(status=200, payload=[])
+
+        async def fake_download(url: str, dest_path, **kwargs) -> bool:
+            if dest_path.name == "FluxLive-333.iso":
+                dest_path.write_bytes(b"some-iso-bytes")
+            else:
+                dest_path.write_text("0000000000000000000000000000000000000000000000000000000000000000  FluxLive-333.iso\n")
+            return True
+
+        monkeypatch.setattr("arcane_mage.provisioner.do_http_to_file", fake_download)
+
+        result = await provisioner.refresh_iso("node1", "local")
+
+        assert result.ok is False
+        assert "Checksum mismatch" in result.error
+        mock_api.upload_file.assert_not_called()
+
+    async def test_download_failure_fails_closed(
+        self, provisioner: Provisioner, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            "arcane_mage.provisioner.do_http", AsyncMock(return_value=self._release())
+        )
+        mock_api.get_storage_content.return_value = ApiResponse(status=200, payload=[])
+        monkeypatch.setattr(
+            "arcane_mage.provisioner.do_http_to_file", AsyncMock(return_value=False)
+        )
+
+        result = await provisioner.refresh_iso("node1", "local")
+
+        assert result.ok is False
+        assert "Failed to download" in result.error
+        mock_api.upload_file.assert_not_called()
