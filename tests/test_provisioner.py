@@ -162,6 +162,45 @@ class TestProvisionerValidation:
         assert config.memory == 8192
         assert config.cores == 4
 
+    async def test_create_vm_config_tags_and_description(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.get_next_id.return_value = ApiResponse(status=200, payload=100)
+        description = "# flux-hub\nkind:     paid\n--- signed ---\n{\"a\": 1}"
+
+        config = await provisioner.create_vm_config(
+            vm_name="test-vm",
+            tier="cumulus",
+            network_bridge="vmbr0",
+            tags="flux-hub;paid;cumulus",
+            description=description,
+        )
+
+        assert config is not None
+        assert config.tags == "flux-hub;paid;cumulus"
+        # Multi-line descriptions reach Proxmox byte for byte; nothing re-wraps them.
+        assert config.description == description
+        assert config.to_proxmox_dict()["description"] == description
+
+    async def test_create_vm_config_omits_unset_tags_and_description(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """An operator on an older hub sends neither; Proxmox must not see the keys at all."""
+        mock_api.get_next_id.return_value = ApiResponse(status=200, payload=100)
+
+        config = await provisioner.create_vm_config(
+            vm_name="test-vm",
+            tier="cumulus",
+            network_bridge="vmbr0",
+        )
+
+        assert config is not None
+        assert config.tags is None
+        assert config.description is None
+        proxmox_dict = config.to_proxmox_dict()
+        assert "tags" not in proxmox_dict
+        assert "description" not in proxmox_dict
+
     async def test_create_vm_config_invalid_tier(self, provisioner: Provisioner, mock_api: AsyncMock):
         config = await provisioner.create_vm_config(
             vm_name="test-vm",
