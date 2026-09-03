@@ -171,6 +171,8 @@ class Hypervisor:
     storage_import: str = "local"
     vm_id: int | None = None
     startup_config: str | None = None
+    tags: str | None = None
+    description: str | None = None
     disk_limit: int | None = None
     cpu_limit: float | None = None
     network_limit: int | None = None

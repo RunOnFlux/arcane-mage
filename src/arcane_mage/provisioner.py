@@ -61,6 +61,8 @@ class VmConfig:
     net0: str
     scsihw: str
     startup: str | None = None
+    tags: str | None = None
+    description: str | None = None
 
     def to_proxmox_dict(self) -> dict:
         """Convert to the dict format Proxmox API expects."""
@@ -627,6 +629,8 @@ class Provisioner:
         vm_id: int | None = None,
         iso_name: str | None = None,
         startup_config: str | None = None,
+        tags: str | None = None,
+        description: str | None = None,
         disk_limit: int | None = None,
         cpu_limit: float | None = None,
         network_limit: int | None = None,
@@ -680,6 +684,8 @@ class Provisioner:
             net0=f"model=virtio,bridge={network_bridge}{network_rate}",
             scsihw="virtio-scsi-single",
             startup=startup_config,
+            tags=tags,
+            description=description,
         )
 
     async def provision_node(
@@ -785,6 +791,8 @@ class Provisioner:
             cpu_limit=hv.cpu_limit,
             network_limit=hv.network_limit,
             startup_config=hv.startup_config,
+            tags=hv.tags,
+            description=hv.description,
         )
 
         if not vm_config:
