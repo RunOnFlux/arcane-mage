@@ -16,7 +16,7 @@ from .fat_writer import FAT12Writer
 from .helpers import do_http, do_http_to_file
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from .models.cluster import ClusterContext
-from .proxmox import ProxmoxApi
+from .proxmox import ApiResponse, ProxmoxApi
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +161,10 @@ class Provisioner:
     def __init__(self, api: ProxmoxApi, cluster: ClusterContext | None = None) -> None:
         self.api = api
         self.cluster = cluster
+        # Set when cluster detection could not complete. A standalone host and a
+        # cluster we failed to read both leave ``cluster`` as None, and they must
+        # not be treated the same way — see ``detect_cluster``.
+        self.cluster_detection_error: str | None = None
 
     @classmethod
     async def from_hypervisor_config(cls, config: HypervisorConfig) -> Self | None:
@@ -182,18 +186,25 @@ class Provisioner:
         if not api:
             return None
 
-        cluster: ClusterContext | None = None
-        if not config.force_standalone:
-            status_res = await api.get_cluster_status()
-            storage_res = await api.get_storage_config()
-            if status_res and storage_res:
-                ctx = ClusterContext.from_api_responses(
-                    status_res.payload, storage_res.payload
-                )
-                if ctx.is_cluster:
-                    cluster = ctx
+        provisioner = cls(api)
 
-        return cls(api, cluster=cluster)
+        if not config.force_standalone:
+            await provisioner.detect_cluster()
+
+        return provisioner
+
+    @staticmethod
+    def _detection_failure(endpoint: str, res: ApiResponse) -> str:
+        """Describe a cluster-detection read that did not come back usable."""
+        cause = res.error or (f"HTTP {res.status}" if res.status else "no response")
+
+        return (
+            f"Unable to read {endpoint} ({cause}), so cluster membership is unknown. "
+            "A standalone host and a cluster this token cannot read look identical "
+            "from here, and provisioning without the cluster pre-flight checks is "
+            "not safe. Grant the token read access, or set force_standalone on this "
+            "hypervisor if it really is standalone."
+        )
 
     async def detect_cluster(self) -> None:
         """Detect cluster topology and set ``self.cluster``.
@@ -201,15 +212,45 @@ class Provisioner:
         Called automatically by ``from_hypervisor_config()``. Call this
         explicitly when constructing a ``Provisioner`` directly via
         ``Provisioner(api)``.
+
+        A standalone host leaves ``self.cluster`` as ``None`` and clears
+        ``self.cluster_detection_error``. A read that fails — a 403 on a
+        least-privilege token, a timeout — leaves the error set instead, because
+        the two are indistinguishable by their result and only one of them is
+        safe to provision on. ``provision_node`` refuses when it is set.
+
+        ``/storage`` is only consulted once the host is known to be a cluster:
+        it exists to classify shared-vs-local storage for EFI dedup, and a
+        standalone host has no use for the answer.
         """
+        self.cluster_detection_error = None
+
         status_res = await self.api.get_cluster_status()
-        storage_res = await self.api.get_storage_config()
-        if status_res and storage_res:
-            ctx = ClusterContext.from_api_responses(
-                status_res.payload, storage_res.payload
+
+        if not status_res:
+            self.cluster_detection_error = self._detection_failure(
+                "/cluster/status", status_res
             )
-            if ctx.is_cluster:
-                self.cluster = ctx
+            return
+
+        status_payload = status_res.payload if isinstance(status_res.payload, list) else []
+
+        if not any(item.get("type") == "cluster" for item in status_payload):
+            self.cluster = None
+            return
+
+        storage_res = await self.api.get_storage_config()
+
+        if not storage_res:
+            self.cluster_detection_error = self._detection_failure("/storage", storage_res)
+            return
+
+        storage_payload = storage_res.payload if isinstance(storage_res.payload, list) else []
+
+        ctx = ClusterContext.from_api_responses(status_payload, storage_payload)
+
+        if ctx.is_cluster:
+            self.cluster = ctx
 
     async def discover_nodes(
         self, all_configs: ArcaneOsConfigGroup
@@ -717,6 +758,10 @@ class Provisioner:
 
         if hv.node_tier not in TIER_CONFIG:
             _cb(False, f"Node tier: {hv.node_tier} does not exist")
+            return False
+
+        if self.cluster_detection_error:
+            _cb(False, self.cluster_detection_error)
             return False
 
         if self.cluster:

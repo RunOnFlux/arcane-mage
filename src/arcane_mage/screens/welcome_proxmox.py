@@ -112,7 +112,13 @@ class WelcomeScreenProxmox(Screen):
 
         # Update cluster info display
         cluster_label = self.query_one("#cluster-info", Label)
-        if provisioner.cluster:
+        if provisioner.cluster_detection_error:
+            # Neither a cluster nor a known-standalone host. Say so rather than
+            # letting the blank label read as "standalone"; provision_node refuses.
+            cluster_label.update("Cluster: UNKNOWN — detection failed")
+            cluster_label.display = True
+            self.notify(provisioner.cluster_detection_error, severity="warning")
+        elif provisioner.cluster:
             c = provisioner.cluster
             quorum_str = "ok" if c.has_quorum else "LOST"
             node_count = len(c.nodes)

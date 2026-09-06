@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **Cluster detection no longer degrades silently to standalone**: a failed `/cluster/status` or `/storage` read (a 403 on a least-privilege token, a timeout) left `cluster` as `None`, which is indistinguishable from a genuine standalone host — so provisioning proceeded with the quorum, node-online and VM-name-uniqueness pre-flight checks quietly skipped. `detect_cluster()` now records `Provisioner.cluster_detection_error` in that case and `provision_node()` refuses, naming the endpoint and the cause. `/storage` is only consulted once the host is known to be clustered, so a standalone host that cannot read it still provisions as before.
 - **`ProxmoxApi.get_vms()`**: returned `payload=None` for offline cluster nodes, causing `build_fluxnode_table` to crash with `TypeError: 'NoneType' object is not iterable`. `discover_nodes()` now coerces `None → []` with defensive guards in `welcome_proxmox.py` and `__main__.py`. Regression test added.
 - **CLI provision summary**: "Provisioned successfully"/"Provisioning failed" lines were printed in a trailing loop, stacking under the last node's block. Each summary is now prefixed with `{hostname}:` and self-describing per node.
 
