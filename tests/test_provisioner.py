@@ -578,3 +578,110 @@ class TestStandalonePath:
 
         assert result is False
         assert any("lost quorum" in msg for _, msg in messages)
+
+
+class TestClusterDetectionIsNotSilent:
+    """A failed detection read and a standalone host both leave ``cluster`` as None,
+    and only one of them is safe to provision on. Proxmox makes them easy to confuse:
+    a least-privilege token gets a permission result that reads as an absence of
+    features, not as a refusal. Detection must keep the two apart."""
+
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock) -> Provisioner:
+        return Provisioner(api=mock_api)
+
+    @staticmethod
+    def _fluxnode() -> AsyncMock:
+        fluxnode = AsyncMock()
+        fluxnode.hypervisor.node_tier = "cumulus"
+        fluxnode.hypervisor.node = "pve55"
+        fluxnode.hypervisor.vm_name = "mt-187-c2"
+        return fluxnode
+
+    async def test_an_unreadable_cluster_status_is_not_a_standalone_host(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.get_cluster_status.return_value = ApiResponse(
+            status=403, error="Permission check failed"
+        )
+
+        await provisioner.detect_cluster()
+
+        assert provisioner.cluster is None
+        assert provisioner.cluster_detection_error is not None
+        assert "/cluster/status" in provisioner.cluster_detection_error
+        assert "Permission check failed" in provisioner.cluster_detection_error
+
+    async def test_provisioning_refuses_when_membership_is_unknown(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """The pre-flight checks are the point. Skipping them silently because the
+        token could not answer is the failure this guards."""
+        mock_api.get_cluster_status.return_value = ApiResponse(status=403, error="denied")
+
+        await provisioner.detect_cluster()
+
+        messages: list[tuple[bool, str]] = []
+        result = await provisioner.provision_node(
+            self._fluxnode(), callback=lambda ok, msg: messages.append((ok, msg))
+        )
+
+        assert result is False
+        assert any("cluster membership is unknown" in msg for _, msg in messages)
+        # It must stop at the gate, not fail later and further in.
+        mock_api.get_api_version.assert_not_called()
+
+    async def test_a_cluster_whose_storage_cannot_be_read_is_reported_not_downgraded(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """/storage classifies shared-vs-local for EFI dedup. Losing it on a host we
+        know is clustered must not quietly demote that host to standalone."""
+        mock_api.get_cluster_status.return_value = ApiResponse(
+            status=200,
+            payload=[
+                {"type": "cluster", "name": "moltentech", "quorate": 1},
+                {"type": "node", "name": "pve55", "online": 1, "local": 1},
+            ],
+        )
+        mock_api.get_storage_config.return_value = ApiResponse(status=500, error="boom")
+
+        await provisioner.detect_cluster()
+
+        assert provisioner.cluster_detection_error is not None
+        assert "/storage" in provisioner.cluster_detection_error
+
+    async def test_a_standalone_host_never_needs_storage_to_prove_itself(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """/storage exists here only to classify cluster storage. Requiring it on a
+        standalone host would refuse provisioning that works today."""
+        mock_api.get_cluster_status.return_value = ApiResponse(
+            status=200, payload=[{"type": "node", "name": "pve50", "online": 1, "local": 1}]
+        )
+        mock_api.get_storage_config.return_value = ApiResponse(status=403, error="denied")
+
+        await provisioner.detect_cluster()
+
+        assert provisioner.cluster is None
+        assert provisioner.cluster_detection_error is None
+        mock_api.get_storage_config.assert_not_called()
+
+    async def test_a_later_clean_detection_clears_a_stale_error(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """The error is per-detection state, not a latch — a token fixed between
+        attempts must not stay locked out."""
+        mock_api.get_cluster_status.return_value = ApiResponse(status=403, error="denied")
+        await provisioner.detect_cluster()
+        assert provisioner.cluster_detection_error is not None
+
+        mock_api.get_cluster_status.return_value = ApiResponse(
+            status=200, payload=[{"type": "node", "name": "pve50", "online": 1, "local": 1}]
+        )
+        await provisioner.detect_cluster()
+
+        assert provisioner.cluster_detection_error is None
