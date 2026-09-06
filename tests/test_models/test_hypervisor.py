@@ -158,6 +158,8 @@ class TestHypervisor:
         hypervisor_dict["cpu_limit"] = 2.0
         hypervisor_dict["network_limit"] = 100
         hypervisor_dict["start_on_creation"] = True
+        hypervisor_dict["tags"] = "flux-hub;paid;cumulus"
+        hypervisor_dict["description"] = "# flux-hub\nkind:     paid"
 
         hyper = Hypervisor(**hypervisor_dict)
 
@@ -167,3 +169,5 @@ class TestHypervisor:
         assert hyper.cpu_limit == 2.0
         assert hyper.network_limit == 100
         assert hyper.start_on_creation is True
+        assert hyper.tags == "flux-hub;paid;cumulus"
+        assert hyper.description == "# flux-hub\nkind:     paid"

@@ -25,6 +25,7 @@ class HypervisorConfig:
     credential: str = Field(repr=False)
     keychain: bool = True
     name: str | None = None
+    force_standalone: bool = False
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, HypervisorConfig):
@@ -170,6 +171,8 @@ class Hypervisor:
     storage_import: str = "local"
     vm_id: int | None = None
     startup_config: str | None = None
+    tags: str | None = None
+    description: str | None = None
     disk_limit: int | None = None
     cpu_limit: float | None = None
     network_limit: int | None = None

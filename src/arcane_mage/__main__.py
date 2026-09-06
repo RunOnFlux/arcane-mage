@@ -21,7 +21,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .models import ArcaneCreatorConfig, ArcaneOsConfigGroup
+from .batch import BatchProvisioner
+from .models import ArcaneCreatorConfig, ArcaneOsConfig, ArcaneOsConfigGroup
 from .proxmox import ProxmoxApi, ResolvedConnection
 
 app = typer.Typer(
@@ -232,6 +233,7 @@ def provision(
     async def run():
         async with ProxmoxApi.from_token(conn.url, conn.token) as api:
             provisioner = Provisioner(api)
+            await provisioner.detect_cluster()
 
             nodes = list(configs)
             if node_filter:
@@ -240,39 +242,51 @@ def provision(
             if not nodes:
                 raise CliError(f"No nodes match filter '{node_filter}'")
 
-            results = []
-            all_ok = True
+            # Apply --start/--no-start override before batching
             for node in nodes:
-                hostname = node.system.hostname
-
                 if start is not None and node.hypervisor:
                     node.hypervisor.start_on_creation = start
 
-                steps: list[dict[str, object]] = []
+            # Per-node step tracking for JSON output
+            node_steps: dict[str, list[dict[str, object]]] = {}
 
-                def callback(ok: bool, msg: str):
-                    steps.append({"ok": ok, "message": msg})
+            def batch_callback(fluxnode: ArcaneOsConfig, ok: bool, msg: str):
+                hostname = fluxnode.system.hostname
+                if hostname not in node_steps:
+                    node_steps[hostname] = []
                     if not use_json:
-                        mark = _CHECK_MARK if ok else _CROSS_MARK
-                        console.print(f"  {mark} {msg}")
+                        console.print(f"\n[bold]{hostname}[/bold]")
+                node_steps[hostname].append({"ok": ok, "message": msg})
+                if not use_json:
+                    mark = _CHECK_MARK if ok else _CROSS_MARK
+                    console.print(f"  {mark} {msg}")
+
+            batch = BatchProvisioner(provisioner, provisioner.cluster)
+            batch_results = await batch.provision_batch(nodes, callback=batch_callback)
+
+            results = []
+            all_ok = True
+            for br in batch_results:
+                hostname = br.fluxnode.system.hostname
+                vm_id = br.fluxnode.hypervisor.vm_id if br.fluxnode.hypervisor else None
+                results.append({"hostname": hostname, "ok": br.ok, "vm_id": vm_id, "steps": node_steps.get(hostname, [])})
 
                 if not use_json:
-                    console.print(f"\n[bold]{hostname}[/bold]")
-
-                result = await provisioner.provision_node(node, callback=callback)
-                results.append({"hostname": hostname, "ok": result, "steps": steps})
-
-                if not use_json:
-                    if result:
-                        console.print(f"  [bold green]Provisioned successfully[/bold green]")
+                    if br.ok:
+                        console.print(f"[bold green]{hostname}: Provisioned successfully[/bold green]")
                     else:
-                        console.print(f"  [bold red]Provisioning failed[/bold red]")
+                        console.print(f"[bold red]{hostname}: Provisioning failed[/bold red]")
 
-                if not result:
+                if not br.ok:
                     all_ok = False
 
             if use_json:
-                print(_json_ok({"nodes": results}) if all_ok else _json_error("Provisioning failed", {"nodes": results}))
+                payload: dict = {"nodes": results}
+                # Convenience for single-node provisions (the marketplace agent path):
+                # also surface vm_id at the top level so callers don't dig into nodes[].
+                if len(results) == 1 and results[0].get("vm_id") is not None:
+                    payload["vm_id"] = results[0]["vm_id"]
+                print(_json_ok(payload) if all_ok else _json_error("Provisioning failed", payload))
 
             return all_ok
 
@@ -633,6 +647,56 @@ def ping(
         raise typer.Exit(1)
 
 
+@app.command(name="refresh-iso")
+def refresh_iso(
+    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    node: str = typer.Option(..., "--node", help="Cluster node to target (e.g. pve1)"),
+    storage_iso: str = typer.Option(..., "--storage-iso", help="ISO storage on the hypervisor"),
+    current_iso: Optional[str] = typer.Option(None, "--current-iso", help="Currently-adopted ISO name, for reporting"),
+    use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
+) -> None:
+    """Check the RunOnFlux release feed for a newer ArcaneOS/FluxLive ISO and stage it if needed."""
+    from dataclasses import asdict
+
+    from .provisioner import Provisioner
+
+    try:
+        conn = _resolve_connection(url, token, hypervisor)
+    except CliError as e:
+        _handle_error(e, use_json)
+
+    async def run():
+        async with ProxmoxApi.from_token(conn.url, conn.token) as api:
+            provisioner = Provisioner(api)
+            return await provisioner.refresh_iso(node, storage_iso, current_iso=current_iso)
+
+    try:
+        result = asyncio.run(run())
+    except CliError as e:
+        _handle_error(e, use_json)
+        return
+
+    data = asdict(result)
+
+    if use_json:
+        print(_json_ok(data) if result.ok else _json_error(result.error or "ISO refresh failed", data))
+    else:
+        if result.ok and result.changed:
+            body = f'[green]Staged {result.iso}[/green] (build {result.build}, {result.severity} severity, "{result.release}")'
+            console.print(Panel(body, title="[bold]ISO Refreshed[/bold]", border_style="green"))
+        elif result.ok:
+            body = f"[dim]{result.iso} already staged[/dim]"
+            console.print(Panel(body, title="[bold]Up to date[/bold]", border_style="green"))
+        else:
+            body = f"[red]{result.error}[/red]"
+            console.print(Panel(body, title="[bold red]Refresh Failed[/bold red]", border_style="red"))
+
+    if not result.ok:
+        raise typer.Exit(1)
+
+
 @app.command()
 def status(
     url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
@@ -687,7 +751,7 @@ def status(
                     continue
 
                 provisioned = False
-                vms = discovery.provisioned_vms.get(hyper.node, [])
+                vms = discovery.provisioned_vms.get(hyper.node) or []
                 for vm in vms:
                     if vm.get("name") == hyper.vm_name:
                         provisioned = True

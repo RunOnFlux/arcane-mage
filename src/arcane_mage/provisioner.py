@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import hashlib
 import importlib.resources as resources
 import logging
 import tempfile
@@ -12,9 +13,10 @@ from typing import Literal, Self
 import yaml
 
 from .fat_writer import FAT12Writer
-from .helpers import do_http
+from .helpers import do_http, do_http_to_file
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
-from .proxmox import ProxmoxApi
+from .models.cluster import ClusterContext
+from .proxmox import ApiResponse, ProxmoxApi
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +61,8 @@ class VmConfig:
     net0: str
     scsihw: str
     startup: str | None = None
+    tags: str | None = None
+    description: str | None = None
 
     def to_proxmox_dict(self) -> dict:
         """Convert to the dict format Proxmox API expects."""
@@ -103,6 +107,46 @@ async def get_latest_iso_version() -> str | None:
     return res.get("iso")
 
 
+_ARCANE_RELEASE_API = "https://images.runonflux.io/arcane/api/latest_release"
+_ARCANE_RELEASE_BASE = "https://images.runonflux.io/arcane/releases"
+
+
+async def _sha256_file(path: Path) -> str:
+    """Compute the sha256 hex digest of a file without blocking the event loop."""
+
+    def _hash() -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(16 * 1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    return await asyncio.to_thread(_hash)
+
+
+def _parse_sha256sum_line(sums_text: str, file_name: str) -> str | None:
+    """Find `file_name`'s expected hash in a `sha256sum`-format checksum file."""
+    for line in sums_text.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[1].strip().lstrip("*") == file_name:
+            return parts[0]
+    return None
+
+
+@dataclass
+class IsoRefreshResult:
+    """Result of checking for (and possibly staging) a newer ArcaneOS/FluxLive ISO."""
+
+    ok: bool
+    changed: bool = False
+    iso: str | None = None
+    previous: str | None = None
+    build: str | None = None
+    severity: str | None = None
+    release: str | None = None
+    error: str | None = None
+
+
 @dataclass
 class HypervisorDiscovery:
     """Result of discovering nodes and their provisioned VMs on a hypervisor."""
@@ -114,8 +158,13 @@ class HypervisorDiscovery:
 class Provisioner:
     """Orchestrates Proxmox VM provisioning for Fluxnodes."""
 
-    def __init__(self, api: ProxmoxApi) -> None:
+    def __init__(self, api: ProxmoxApi, cluster: ClusterContext | None = None) -> None:
         self.api = api
+        self.cluster = cluster
+        # Set when cluster detection could not complete. A standalone host and a
+        # cluster we failed to read both leave ``cluster`` as None, and they must
+        # not be treated the same way — see ``detect_cluster``.
+        self.cluster_detection_error: str | None = None
 
     @classmethod
     async def from_hypervisor_config(cls, config: HypervisorConfig) -> Self | None:
@@ -137,7 +186,71 @@ class Provisioner:
         if not api:
             return None
 
-        return cls(api)
+        provisioner = cls(api)
+
+        if not config.force_standalone:
+            await provisioner.detect_cluster()
+
+        return provisioner
+
+    @staticmethod
+    def _detection_failure(endpoint: str, res: ApiResponse) -> str:
+        """Describe a cluster-detection read that did not come back usable."""
+        cause = res.error or (f"HTTP {res.status}" if res.status else "no response")
+
+        return (
+            f"Unable to read {endpoint} ({cause}), so cluster membership is unknown. "
+            "A standalone host and a cluster this token cannot read look identical "
+            "from here, and provisioning without the cluster pre-flight checks is "
+            "not safe. Grant the token read access, or set force_standalone on this "
+            "hypervisor if it really is standalone."
+        )
+
+    async def detect_cluster(self) -> None:
+        """Detect cluster topology and set ``self.cluster``.
+
+        Called automatically by ``from_hypervisor_config()``. Call this
+        explicitly when constructing a ``Provisioner`` directly via
+        ``Provisioner(api)``.
+
+        A standalone host leaves ``self.cluster`` as ``None`` and clears
+        ``self.cluster_detection_error``. A read that fails — a 403 on a
+        least-privilege token, a timeout — leaves the error set instead, because
+        the two are indistinguishable by their result and only one of them is
+        safe to provision on. ``provision_node`` refuses when it is set.
+
+        ``/storage`` is only consulted once the host is known to be a cluster:
+        it exists to classify shared-vs-local storage for EFI dedup, and a
+        standalone host has no use for the answer.
+        """
+        self.cluster_detection_error = None
+
+        status_res = await self.api.get_cluster_status()
+
+        if not status_res:
+            self.cluster_detection_error = self._detection_failure(
+                "/cluster/status", status_res
+            )
+            return
+
+        status_payload = status_res.payload if isinstance(status_res.payload, list) else []
+
+        if not any(item.get("type") == "cluster" for item in status_payload):
+            self.cluster = None
+            return
+
+        storage_res = await self.api.get_storage_config()
+
+        if not storage_res:
+            self.cluster_detection_error = self._detection_failure("/storage", storage_res)
+            return
+
+        storage_payload = storage_res.payload if isinstance(storage_res.payload, list) else []
+
+        ctx = ClusterContext.from_api_responses(status_payload, storage_payload)
+
+        if ctx.is_cluster:
+            self.cluster = ctx
 
     async def discover_nodes(
         self, all_configs: ArcaneOsConfigGroup
@@ -157,7 +270,7 @@ class Provisioner:
         async def handle_node(node: dict) -> None:
             if name := node.get("node"):
                 vm_res = await self.api.get_vms(name)
-                provisioned[name] = vm_res.payload
+                provisioned[name] = vm_res.payload or []
                 useable_nodes.add_nodes(all_configs.get_nodes_by_hypervisor_name(name))
 
         await asyncio.gather(*(handle_node(n) for n in hyper_nodes.payload))
@@ -241,6 +354,76 @@ class Provisioner:
         )
 
         return bool(iso_exists)
+
+    async def refresh_iso(
+        self, node: str, storage_iso: str, current_iso: str | None = None
+    ) -> IsoRefreshResult:
+        """Check the RunOnFlux release feed for a newer ArcaneOS/FluxLive ISO and,
+        if the hypervisor doesn't already have it staged, download + checksum-verify
+        + upload it to `storage_iso`. No-ops (changed=False) if already current.
+        """
+        release = await do_http(_ARCANE_RELEASE_API, total_timeout=10)
+
+        if not release or not isinstance(release, dict):
+            return IsoRefreshResult(ok=False, error="Unable to fetch latest release info")
+
+        iso_name = release.get("iso")
+        build = release.get("build")
+        severity = release.get("severity")
+        release_name = release.get("release")
+        checksums_name = release.get("checksums")
+
+        if not iso_name or not build or not checksums_name:
+            return IsoRefreshResult(ok=False, error=f"Malformed release response: {release}")
+
+        if await self.validate_iso_version(node, iso_name, storage_iso):
+            return IsoRefreshResult(
+                ok=True, changed=False, iso=iso_name, build=build, severity=severity, release=release_name
+            )
+
+        base = f"{_ARCANE_RELEASE_BASE}/{build}"
+
+        with tempfile.TemporaryDirectory(prefix="arcane_mage_iso_") as tmpdir:
+            iso_path = Path(tmpdir) / iso_name
+            sums_path = Path(tmpdir) / checksums_name
+
+            if not await do_http_to_file(f"{base}/{iso_name}", iso_path, read_timeout=1200):
+                return IsoRefreshResult(ok=False, error=f"Failed to download {iso_name}", build=build)
+
+            if not await do_http_to_file(f"{base}/{checksums_name}", sums_path, read_timeout=60):
+                return IsoRefreshResult(ok=False, error=f"Failed to download {checksums_name}", build=build)
+
+            expected_hash = _parse_sha256sum_line(sums_path.read_text(), iso_name)
+
+            if not expected_hash:
+                return IsoRefreshResult(
+                    ok=False, error=f"{iso_name} not listed in {checksums_name}", build=build
+                )
+
+            actual_hash = await _sha256_file(iso_path)
+
+            if actual_hash != expected_hash:
+                return IsoRefreshResult(ok=False, error=f"Checksum mismatch for {iso_name}", build=build)
+
+            upload_res = await self.api.upload_file(
+                iso_path, node=node, storage=storage_iso, file_name=iso_name, content="iso"
+            )
+
+            if not upload_res:
+                return IsoRefreshResult(ok=False, error=f"Upload of {iso_name} failed", build=build)
+
+            if not await self.api.wait_for_task(upload_res.payload, node, max_wait_s=120):
+                return IsoRefreshResult(ok=False, error=f"Upload of {iso_name} did not complete", build=build)
+
+        return IsoRefreshResult(
+            ok=True,
+            changed=True,
+            iso=iso_name,
+            previous=current_iso,
+            build=build,
+            severity=severity,
+            release=release_name,
+        )
 
     async def validate_network(self, node: str, network: str) -> bool:
         """Validate that the specified network bridge exists on the hypervisor."""
@@ -487,6 +670,8 @@ class Provisioner:
         vm_id: int | None = None,
         iso_name: str | None = None,
         startup_config: str | None = None,
+        tags: str | None = None,
+        description: str | None = None,
         disk_limit: int | None = None,
         cpu_limit: float | None = None,
         network_limit: int | None = None,
@@ -540,6 +725,8 @@ class Provisioner:
             net0=f"model=virtio,bridge={network_bridge}{network_rate}",
             scsihw="virtio-scsi-single",
             startup=startup_config,
+            tags=tags,
+            description=description,
         )
 
     async def provision_node(
@@ -547,6 +734,7 @@ class Provisioner:
         fluxnode: ArcaneOsConfig,
         callback: Callable[[bool, str], None] | None = None,
         delete_efi: bool = True,
+        skip_efi_upload: bool = False,
     ) -> bool:
         """Provision a single Fluxnode VM on a Proxmox hypervisor.
 
@@ -571,6 +759,35 @@ class Provisioner:
         if hv.node_tier not in TIER_CONFIG:
             _cb(False, f"Node tier: {hv.node_tier} does not exist")
             return False
+
+        if self.cluster_detection_error:
+            _cb(False, self.cluster_detection_error)
+            return False
+
+        if self.cluster:
+            if not self.cluster.has_quorum:
+                _cb(False, "Cluster has lost quorum, refusing to provision")
+                return False
+
+            if not self.cluster.is_node_online(hv.node):
+                _cb(False, f"Node '{hv.node}' is offline in cluster")
+                return False
+
+            resources_res = await self.api.get_cluster_resources(resource_type="vm")
+            if resources_res and isinstance(resources_res.payload, list):
+                duplicate = next(
+                    (r for r in resources_res.payload if r.get("name") == hv.vm_name),
+                    None,
+                )
+                if duplicate:
+                    existing_node = duplicate.get("node", "unknown")
+                    _cb(
+                        False,
+                        f"VM name '{hv.vm_name}' already exists on node '{existing_node}'",
+                    )
+                    return False
+
+            _cb(True, "Cluster pre-flight checks passed")
 
         version_valid, version_error = await self.validate_api_version(hv.node)
 
@@ -619,6 +836,8 @@ class Provisioner:
             cpu_limit=hv.cpu_limit,
             network_limit=hv.network_limit,
             startup_config=hv.startup_config,
+            tags=hv.tags,
+            description=hv.description,
         )
 
         if not vm_config:
@@ -626,6 +845,9 @@ class Provisioner:
             return False
 
         vm_id = vm_config.vmid
+        # Surface the resolved vmid back onto the config so callers (CLI --json,
+        # downstream automation) can capture it even when it was auto-assigned.
+        hv.vm_id = vm_id
 
         config_upload = yaml.dump({"nodes": [fluxnode.to_dict()]})
 
@@ -637,13 +859,16 @@ class Provisioner:
 
         _cb(True, "Config image uploaded")
 
-        efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
+        if skip_efi_upload:
+            _cb(True, "EFI image upload skipped (shared storage)")
+        else:
+            efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
 
-        if not efi_ok:
-            _cb(False, "Unable to upload EFI image to hypervisor")
-            return False
+            if not efi_ok:
+                _cb(False, "Unable to upload EFI image to hypervisor")
+                return False
 
-        _cb(True, "EFI image uploaded")
+            _cb(True, "EFI image uploaded")
 
         created_ok = await self.create_vm(vm_config, node=hv.node)
 

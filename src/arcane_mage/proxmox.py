@@ -300,6 +300,24 @@ class ProxmoxApi:
 
         return res
 
+    async def get_cluster_status(self) -> ApiResponse:
+        """GET /cluster/status — cluster name, quorum, node membership."""
+        res = await self._do_get("cluster/status")
+
+        return res
+
+    async def get_cluster_resources(
+        self, resource_type: str | None = None
+    ) -> ApiResponse:
+        """GET /cluster/resources — cluster-wide VM/storage/node list."""
+        path = "cluster/resources"
+        if resource_type:
+            path += f"?type={resource_type}"
+
+        res = await self._do_get(path)
+
+        return res
+
     async def get_hypervisor_nodes(self) -> ApiResponse:
         res = await self._do_get("nodes")
 
@@ -376,6 +394,15 @@ class ProxmoxApi:
         return res
 
     async def get_task(self, task_id: str, node: str) -> ApiResponse:
+        # UPID format: "UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:"
+        # The task runs on whichever node's pveproxy accepted the request, which
+        # in cluster setups may differ from the caller's target node (e.g. uploads
+        # run on the connection node, not hv.node). Extract the real task node
+        # from the UPID so the status endpoint path matches.
+        upid_parts = task_id.split(":")
+        if len(upid_parts) >= 2 and upid_parts[0] == "UPID" and upid_parts[1]:
+            node = upid_parts[1]
+
         quoted_task = urllib.parse.quote(task_id)
         endpoint = f"nodes/{node}/tasks/{quoted_task}/status"
 
@@ -426,6 +453,7 @@ class ProxmoxApi:
         node: str,
         storage: str,
         file_name: str | None = None,
+        content: str = "import",
     ) -> ApiResponse:
         endpoint = f"nodes/{node}/storage/{storage}/upload"
 
@@ -449,7 +477,7 @@ class ProxmoxApi:
             # packet capture and decode the ssl traffic with wireshark. The multipart data
             # has to be in this specific order, as well as the headers have to be in order.
             with aiohttp.MultipartWriter("form-data") as mpwriter:
-                content_part = mpwriter.append(b"import")
+                content_part = mpwriter.append(content.encode())
                 content_part.set_content_disposition("form-data", name="content")
 
                 file_part = mpwriter.append(payload)
