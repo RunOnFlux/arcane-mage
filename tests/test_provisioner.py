@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from arcane_mage.models import ArcaneOsConfigGroup
+from arcane_mage.models.cluster import ClusterContext
 from arcane_mage.provisioner import TIER_CONFIG, Provisioner, is_api_min_version
 from arcane_mage.proxmox import ApiResponse
 
@@ -489,3 +490,91 @@ class TestRefreshIso:
         assert result.ok is False
         assert "Failed to download" in result.error
         mock_api.upload_file.assert_not_called()
+
+
+class TestStandalonePath:
+    """The cluster work's headline claim is that a standalone Proxmox server behaves
+    exactly as it did before. Two seams carry that claim, and neither was pinned:
+    detection has to leave ``cluster`` as None, and ``provision_node`` has to skip the
+    whole pre-flight block when it is. Each test carries its cluster-side control so a
+    detector that always returned None, or a pre-flight that never ran, cannot pass."""
+
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock) -> Provisioner:
+        return Provisioner(api=mock_api)
+
+    STANDALONE_STATUS = [{"type": "node", "name": "pve50", "online": 1, "local": 1}]
+    CLUSTER_STATUS = [
+        {"type": "cluster", "name": "moltentech", "quorate": 1},
+        {"type": "node", "name": "pve55", "online": 1, "local": 1},
+        {"type": "node", "name": "pve30", "online": 1, "local": 0},
+    ]
+    STORAGE = [{"storage": "local-lvm", "shared": 0, "content": "images"}]
+
+    async def test_detect_cluster_leaves_a_standalone_host_uncluttered(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """A standalone node's /cluster/status has no type=cluster entry, so nothing
+        cluster-shaped may be built from it."""
+        mock_api.get_storage_config.return_value = ApiResponse(status=200, payload=self.STORAGE)
+        mock_api.get_cluster_status.return_value = ApiResponse(
+            status=200, payload=self.STANDALONE_STATUS
+        )
+
+        await provisioner.detect_cluster()
+
+        assert provisioner.cluster is None
+
+        # Control: the same call against a real cluster must set it, or the assertion
+        # above would hold for a detector that had stopped working entirely.
+        mock_api.get_cluster_status.return_value = ApiResponse(
+            status=200, payload=self.CLUSTER_STATUS
+        )
+
+        await provisioner.detect_cluster()
+
+        assert provisioner.cluster is not None
+        assert provisioner.cluster.cluster_name == "moltentech"
+
+    async def test_provision_node_skips_the_cluster_preflight_when_standalone(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """With no cluster context, provisioning must reach the version check without
+        emitting a cluster step or making a cluster-wide call — that step count is what
+        the CLI's --json consumers see."""
+        fluxnode = AsyncMock()
+        fluxnode.hypervisor.node_tier = "cumulus"
+        fluxnode.hypervisor.node = "pve50"
+        fluxnode.hypervisor.vm_name = "ms-186-c6"
+
+        # Fail at the first step after the pre-flight block, so the run stops somewhere
+        # provable rather than walking the whole provision.
+        mock_api.get_api_version.return_value = ApiResponse(status=500, error="unreachable")
+
+        messages: list[tuple[bool, str]] = []
+        result = await provisioner.provision_node(
+            fluxnode, callback=lambda ok, msg: messages.append((ok, msg))
+        )
+
+        assert result is False
+        assert any("Unable to get Proxmox api version" in msg for _, msg in messages)
+        assert not any("luster" in msg for _, msg in messages)
+        mock_api.get_cluster_resources.assert_not_called()
+
+        # Control: the same node under a cluster that has lost quorum must be refused
+        # before the version check is ever reached.
+        provisioner.cluster = ClusterContext(
+            is_cluster=True, cluster_name="moltentech", has_quorum=False
+        )
+
+        messages.clear()
+        result = await provisioner.provision_node(
+            fluxnode, callback=lambda ok, msg: messages.append((ok, msg))
+        )
+
+        assert result is False
+        assert any("lost quorum" in msg for _, msg in messages)
