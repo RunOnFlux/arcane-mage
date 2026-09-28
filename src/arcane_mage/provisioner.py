@@ -97,6 +97,29 @@ def _get_vm_config_file_name(vm_id: int) -> str:
     return f"{vm_id}_{_config_image_base}.raw"
 
 
+# The EFI image a batch shares on one storage: uploaded by its first node, deleted by its last.
+_SHARED_EFI_FILE = "arcane_efi.raw"
+
+
+def _get_vm_efi_file_name(vm_id: int) -> str:
+    """A run that uploads AND deletes its own EFI names it after its VM.
+
+    Two independent ``provision_node`` runs on one host (two CLI processes, as an agent
+    runs concurrent jobs) each uploaded and then deleted the shared ``arcane_efi.raw``:
+    whichever finished first deleted the file out from under the other's create
+    ("cannot import from 'local:import/arcane_efi.raw'").
+    """
+    return f"{vm_id}_arcane_efi.raw"
+
+
+# How long to wait on a Proxmox task. A create allocates a 220+ GB volume and copies the
+# EFI + config disks; on a host whose disks are busy (another node booting) it runs well
+# past the old 10 s default, and giving up then DELETED the install images from under the
+# still-running create ("failed to stat '/var/lib/vz/import/<id>_arcane_config.raw'").
+CREATE_TASK_MAX_WAIT_S = 600
+UPLOAD_TASK_MAX_WAIT_S = 120
+
+
 async def get_latest_iso_version() -> str | None:
     """Fetch the latest FluxOS ISO version from the release API."""
     res = await do_http("https://images.runonflux.io/api/latest_release", total_timeout=3)
@@ -589,11 +612,12 @@ class Provisioner:
             log.error("VM creation failed: status=%s error=%s", create_res.status, create_res.error)
             return False
 
-        return await self.api.wait_for_task(create_res.payload, node)
+        return await self.api.wait_for_task(create_res.payload, node, CREATE_TASK_MAX_WAIT_S)
 
-    async def delete_install_disks(self, vm_id: int, node: str, storage: str, delete_efi: bool = True) -> bool:
+    async def delete_install_disks(
+        self, vm_id: int, node: str, storage: str, delete_efi: bool = True, efi_file: str = _SHARED_EFI_FILE
+    ) -> bool:
         """Delete the EFI and config disk images used during provisioning."""
-        efi_file = "arcane_efi.raw"
         config_file = f"{vm_id}_arcane_config.raw"
 
         if delete_efi:
@@ -616,7 +640,7 @@ class Provisioner:
 
         return await self.api.wait_for_task(config_res.payload, node)
 
-    async def upload_arcane_efi(self, node: str, storage: str) -> bool:
+    async def upload_arcane_efi(self, node: str, storage: str, file_name: str = _SHARED_EFI_FILE) -> bool:
         """Upload the EFI bootloader image to the hypervisor."""
         with _efi_gz_resource.open("rb") as f:
             efi_disk = gzip.decompress(f.read())
@@ -625,13 +649,13 @@ class Provisioner:
             efi_disk,
             node=node,
             storage=storage,
-            file_name="arcane_efi.raw",
+            file_name=file_name,
         )
 
         if not upload_res:
             return False
 
-        return await self.api.wait_for_task(upload_res.payload, node)
+        return await self.api.wait_for_task(upload_res.payload, node, UPLOAD_TASK_MAX_WAIT_S)
 
     async def upload_arcane_config(self, config: bytes, vm_id: int, node: str, storage: str) -> bool:
         """Write node config into a FAT image and upload to the hypervisor."""
@@ -657,7 +681,7 @@ class Provisioner:
         if not upload_res:
             return False
 
-        return await self.api.wait_for_task(upload_res.payload, node)
+        return await self.api.wait_for_task(upload_res.payload, node, UPLOAD_TASK_MAX_WAIT_S)
 
     async def create_vm_config(
         self,
@@ -676,8 +700,13 @@ class Provisioner:
         memory_mb: int | None = None,
         cpu_limit: float | None = None,
         network_limit: int | None = None,
+        per_vm_efi: bool = False,
     ) -> VmConfig | None:
-        """Generate the Proxmox VM configuration for a given tier."""
+        """Generate the Proxmox VM configuration for a given tier.
+
+        ``per_vm_efi`` imports the EFI disk from ``<vmid>_arcane_efi.raw`` (see
+        ``_get_vm_efi_file_name``) instead of the shared ``arcane_efi.raw``.
+        """
         tier_config = TIER_CONFIG.get(tier)
 
         if not tier_config:
@@ -699,11 +728,12 @@ class Provisioner:
 
         smbios_uuid = str(uuid.uuid4())
         config_img = _get_vm_config_file_name(vm_id)
+        efi_file = _get_vm_efi_file_name(vm_id) if per_vm_efi else _SHARED_EFI_FILE
 
         return VmConfig(
             efidisk0=(
                 f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,"
-                f"import-from={storage_import}:import/arcane_efi.raw"
+                f"import-from={storage_import}:import/{efi_file}"
             ),
             cpu="host",
             ostype="l26",
@@ -824,6 +854,10 @@ class Provisioner:
 
         _cb(True, "Network validated")
 
+        # A run that both uploads and deletes its EFI owns it outright, so it gets a name no
+        # other run on this host can delete. Only a batch sharing one upload keeps the shared name.
+        per_vm_efi = not skip_efi_upload and delete_efi
+
         vm_config = await self.create_vm_config(
             vm_name=hv.vm_name,
             vm_id=hv.vm_id,
@@ -840,6 +874,7 @@ class Provisioner:
             startup_config=hv.startup_config,
             tags=hv.tags,
             description=hv.description,
+            per_vm_efi=per_vm_efi,
         )
 
         if not vm_config:
@@ -847,6 +882,7 @@ class Provisioner:
             return False
 
         vm_id = vm_config.vmid
+        efi_file = _get_vm_efi_file_name(vm_id) if per_vm_efi else _SHARED_EFI_FILE
         # Surface the resolved vmid back onto the config so callers (CLI --json,
         # downstream automation) can capture it even when it was auto-assigned.
         hv.vm_id = vm_id
@@ -864,7 +900,7 @@ class Provisioner:
         if skip_efi_upload:
             _cb(True, "EFI image upload skipped (shared storage)")
         else:
-            efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
+            efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import, efi_file)
 
             if not efi_ok:
                 _cb(False, "Unable to upload EFI image to hypervisor")
@@ -875,13 +911,13 @@ class Provisioner:
         created_ok = await self.create_vm(vm_config, node=hv.node)
 
         if not created_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
+            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi, efi_file)
             _cb(False, "Unable to create VM on hypervisor")
             return False
 
         _cb(True, "VM Created")
 
-        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
+        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi, efi_file)
 
         if not deleted_ok:
             _cb(False, "Unable to clean up disk images on hypervisor")

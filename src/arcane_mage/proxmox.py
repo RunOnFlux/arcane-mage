@@ -418,13 +418,17 @@ class ProxmoxApi:
         if not task_res:
             return False
 
+        # A task is over when Proxmox says ``status: stopped``; ``exitstatus`` is then "OK"
+        # or the error. Waiting on ``exitstatus == "OK"`` alone would sit out the whole
+        # ``max_wait_s`` on a task that already failed.
+        status = task_res.payload.get("status")
         exit_status = task_res.payload.get("exitstatus")
         # we start the timer here, so we don't include the time it took
         # to get the first api request
         start = monotonic()
         elapsed = 0.0
 
-        while exit_status != "OK" and elapsed < max_wait_s:
+        while status != "stopped" and exit_status != "OK" and elapsed < max_wait_s:
             await asyncio.sleep(1)
 
             task_res = await self.get_task(task_id, node)
@@ -432,6 +436,7 @@ class ProxmoxApi:
             if not task_res:
                 return False
 
+            status = task_res.payload.get("status")
             exit_status = task_res.payload.get("exitstatus")
             elapsed = monotonic() - start
 

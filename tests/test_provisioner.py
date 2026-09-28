@@ -703,3 +703,84 @@ class TestClusterDetectionIsNotSilent:
         await provisioner.detect_cluster()
 
         assert provisioner.cluster_detection_error is None
+
+
+class TestInstallDiskRaces:
+    """prod 2026-09-28, pve65: VM 268's create ran past the 10 s wait, and the give-up path
+    deleted its config image from under the still-running create. And two independent runs on
+    one host shared ``arcane_efi.raw``, so either could delete the other's EFI mid-create."""
+
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock) -> Provisioner:
+        return Provisioner(api=mock_api)
+
+    async def test_create_waits_long_enough_for_a_busy_host(self, provisioner: Provisioner, mock_api: AsyncMock):
+        from arcane_mage.provisioner import CREATE_TASK_MAX_WAIT_S
+
+        mock_api.create_vm.return_value = ApiResponse(status=200, payload="UPID:create")
+        mock_api.wait_for_task.return_value = True
+        config = await provisioner.create_vm_config(vm_name="n", tier="cumulus", network_bridge="vmbr0", vm_id=268)
+        assert config is not None
+
+        assert await provisioner.create_vm(config, "node1") is True
+        mock_api.wait_for_task.assert_awaited_once_with("UPID:create", "node1", CREATE_TASK_MAX_WAIT_S)
+        assert CREATE_TASK_MAX_WAIT_S >= 300
+
+    async def test_uploads_wait_longer_than_ten_seconds(self, provisioner: Provisioner, mock_api: AsyncMock):
+        from arcane_mage.provisioner import UPLOAD_TASK_MAX_WAIT_S
+
+        mock_api.upload_file.return_value = ApiResponse(status=200, payload="UPID:up")
+        mock_api.wait_for_task.return_value = True
+
+        assert await provisioner.upload_arcane_efi("node1", "local", "268_arcane_efi.raw") is True
+        assert mock_api.upload_file.call_args.kwargs["file_name"] == "268_arcane_efi.raw"
+        mock_api.wait_for_task.assert_awaited_with("UPID:up", "node1", UPLOAD_TASK_MAX_WAIT_S)
+
+        assert await provisioner.upload_arcane_config(b"nodes: []", 268, "node1", "local") is True
+        mock_api.wait_for_task.assert_awaited_with("UPID:up", "node1", UPLOAD_TASK_MAX_WAIT_S)
+
+    async def test_per_vm_efi_is_imported_and_deleted_by_its_own_name(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        own = await provisioner.create_vm_config(
+            vm_name="n", tier="cumulus", network_bridge="vmbr0", vm_id=268, per_vm_efi=True
+        )
+        shared = await provisioner.create_vm_config(vm_name="n", tier="cumulus", network_bridge="vmbr0", vm_id=269)
+        assert own is not None and shared is not None
+        assert "import-from=local:import/268_arcane_efi.raw" in own.efidisk0
+        assert "import-from=local:import/arcane_efi.raw" in shared.efidisk0
+
+        mock_api.delete_file.return_value = ApiResponse(status=200, payload="UPID:del")
+        mock_api.wait_for_task.return_value = True
+        assert await provisioner.delete_install_disks(268, "node1", "local", True, "268_arcane_efi.raw") is True
+        deleted = [c.args[0] for c in mock_api.delete_file.call_args_list]
+        assert deleted == ["268_arcane_efi.raw", "268_arcane_config.raw"]
+
+
+class TestWaitForTask:
+    async def test_a_failed_task_returns_at_once_not_after_max_wait(self):
+        from time import monotonic
+
+        from arcane_mage.proxmox import ProxmoxApi
+
+        api = ProxmoxApi.__new__(ProxmoxApi)
+        api.get_task = AsyncMock(
+            return_value=ApiResponse(status=200, payload={"status": "stopped", "exitstatus": "unable to create VM 268"})
+        )
+        start = monotonic()
+        assert await api.wait_for_task("UPID:x", "node1", max_wait_s=600) is False
+        assert monotonic() - start < 2
+
+    async def test_a_running_task_is_waited_on_until_ok(self):
+        from arcane_mage.proxmox import ProxmoxApi
+
+        api = ProxmoxApi.__new__(ProxmoxApi)
+        running = ApiResponse(status=200, payload={"status": "running"})
+        done = ApiResponse(status=200, payload={"status": "stopped", "exitstatus": "OK"})
+        api.get_task = AsyncMock(side_effect=[running, running, done])
+        assert await api.wait_for_task("UPID:x", "node1", max_wait_s=600) is True
+        assert api.get_task.await_count == 3
