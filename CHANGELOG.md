@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **Proxmox cluster support**: detect cluster membership on connection; run pre-flight checks (quorum, target node online, cluster-wide VM name uniqueness) before provisioning. Backwards compatible — standalone Proxmox servers behave identically.
+- **`ClusterContext` model** (`models/cluster.py`): topology detection, per-node online/offline status, shared-vs-local storage queries.
+- **`BatchProvisioner`** (`batch.py`): orchestrates provisioning across multiple cluster nodes with EFI upload dedup on shared storage and failure recovery.
+- **`Provisioner.detect_cluster()`**: populates cluster context during construction; returns `None` for standalone Proxmox servers.
+- **`HypervisorConfig.force_standalone`**: escape hatch to skip cluster detection on a specific hypervisor.
+- **TUI**: cluster info label (name, node count, quorum state), new "Status" column showing node online/offline, quorum-lost warning disables provisioning.
+- **CLI**: `provision` integrates `BatchProvisioner`; JSON output shape unchanged; new "Cluster pre-flight checks passed" step reported alongside existing steps.
+
+### Fixed
+
+- **A slow VM create no longer deletes its own install images**: `create_vm` waited only 10 s (the `wait_for_task` default) for the create task. On a host whose disks were busy — a second node created while the first boots — the create ran longer, `provision_node` took the timeout for a failure and deleted `<id>_arcane_config.raw` and the EFI image while the create was still running, which then failed with `failed to stat '/var/lib/vz/import/<id>_arcane_config.raw'`. Creates now wait up to 600 s and config/EFI uploads up to 120 s (the upload timeout surfaced as "Unable to upload Config image to hypervisor"). `wait_for_task` also returns as soon as a task is `stopped`, so a task that failed is reported at once instead of after the whole wait.
+- **Concurrent single-node provisions no longer share one EFI image**: two independent runs on one host (an agent running two jobs) each uploaded and then deleted `arcane_efi.raw`, so the first to finish could delete the other's EFI mid-create (`cannot import from 'local:import/arcane_efi.raw'`). A run that both uploads and deletes its EFI now uses `<vmid>_arcane_efi.raw`; only a batch sharing one upload keeps the shared name.
+- **Cluster detection no longer degrades silently to standalone**: a failed `/cluster/status` or `/storage` read (a 403 on a least-privilege token, a timeout) left `cluster` as `None`, which is indistinguishable from a genuine standalone host — so provisioning proceeded with the quorum, node-online and VM-name-uniqueness pre-flight checks quietly skipped. `detect_cluster()` now records `Provisioner.cluster_detection_error` in that case and `provision_node()` refuses, naming the endpoint and the cause. `/storage` is only consulted once the host is known to be clustered, so a standalone host that cannot read it still provisions as before.
+- **`ProxmoxApi.get_vms()`**: returned `payload=None` for offline cluster nodes, causing `build_fluxnode_table` to crash with `TypeError: 'NoneType' object is not iterable`. `discover_nodes()` now coerces `None → []` with defensive guards in `welcome_proxmox.py` and `__main__.py`. Regression test added.
+- **CLI provision summary**: "Provisioned successfully"/"Provisioning failed" lines were printed in a trailing loop, stacking under the last node's block. Each summary is now prefixed with `{hostname}:` and self-describing per node.
+
 ## 2.0.0
 
 ### Breaking Changes

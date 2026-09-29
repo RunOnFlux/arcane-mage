@@ -37,7 +37,7 @@ class ProvisioningInfoScreen(ModalScreen):
         error_label = Label("", id="error-label")
         error_label.visible = False
         main_container = Container()
-        main_container.border_title = f"Provisioining: {self.vm_name}"
+        main_container.border_title = f"Provisioning: {self.vm_name}"
 
         wait_container = Horizontal(id="wait-container")
         wait_container.visible = False

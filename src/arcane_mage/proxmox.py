@@ -80,6 +80,13 @@ class ApiResponse:
         return self.status == 200 and not self.error
 
 
+def _unreadable_task(res: ApiResponse) -> str:
+    if res.timed_out:
+        return "task status request timed out"
+    detail = f"HTTP {res.status}: {res.error}" if res.error else f"HTTP {res.status}"
+    return f"task status unreadable ({detail})"
+
+
 class ProxmoxApi:
     """Async client for the Proxmox VE API, supporting token and user/password auth."""
 
@@ -300,6 +307,24 @@ class ProxmoxApi:
 
         return res
 
+    async def get_cluster_status(self) -> ApiResponse:
+        """GET /cluster/status — cluster name, quorum, node membership."""
+        res = await self._do_get("cluster/status")
+
+        return res
+
+    async def get_cluster_resources(
+        self, resource_type: str | None = None
+    ) -> ApiResponse:
+        """GET /cluster/resources — cluster-wide VM/storage/node list."""
+        path = "cluster/resources"
+        if resource_type:
+            path += f"?type={resource_type}"
+
+        res = await self._do_get(path)
+
+        return res
+
     async def get_hypervisor_nodes(self) -> ApiResponse:
         res = await self._do_get("nodes")
 
@@ -376,6 +401,15 @@ class ProxmoxApi:
         return res
 
     async def get_task(self, task_id: str, node: str) -> ApiResponse:
+        # UPID format: "UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:"
+        # The task runs on whichever node's pveproxy accepted the request, which
+        # in cluster setups may differ from the caller's target node (e.g. uploads
+        # run on the connection node, not hv.node). Extract the real task node
+        # from the UPID so the status endpoint path matches.
+        upid_parts = task_id.split(":")
+        if len(upid_parts) >= 2 and upid_parts[0] == "UPID" and upid_parts[1]:
+            node = upid_parts[1]
+
         quoted_task = urllib.parse.quote(task_id)
         endpoint = f"nodes/{node}/tasks/{quoted_task}/status"
 
@@ -383,32 +417,49 @@ class ProxmoxApi:
 
         return res
 
+    # Why the last ``wait_for_task`` returned False: Proxmox's own ``exitstatus`` (e.g.
+    # "unable to create VM 219 - cannot import from 'local:import/arcane_efi.raw' ..."),
+    # a timeout, or an unreadable task. None after a task that ended OK.
+    last_task_error: str | None = None
+
     async def wait_for_task(
         self, task_id: str, node: str, max_wait_s: int = 10
     ) -> bool:
+        self.last_task_error = None
         task_res = await self.get_task(task_id, node)
 
         if not task_res:
+            self.last_task_error = _unreadable_task(task_res)
             return False
 
+        # A task is over when Proxmox says ``status: stopped``; ``exitstatus`` is then "OK"
+        # or the error. Waiting on ``exitstatus == "OK"`` alone would sit out the whole
+        # ``max_wait_s`` on a task that already failed.
+        status = task_res.payload.get("status")
         exit_status = task_res.payload.get("exitstatus")
         # we start the timer here, so we don't include the time it took
         # to get the first api request
         start = monotonic()
         elapsed = 0.0
 
-        while exit_status != "OK" and elapsed < max_wait_s:
+        while status != "stopped" and exit_status != "OK" and elapsed < max_wait_s:
             await asyncio.sleep(1)
 
             task_res = await self.get_task(task_id, node)
 
             if not task_res:
+                self.last_task_error = _unreadable_task(task_res)
                 return False
 
+            status = task_res.payload.get("status")
             exit_status = task_res.payload.get("exitstatus")
             elapsed = monotonic() - start
 
-        return exit_status == "OK"
+        if exit_status == "OK":
+            return True
+
+        self.last_task_error = exit_status or f"task still running after {max_wait_s}s"
+        return False
 
     async def delete_file(
         self, file_name: str, node: str, storage: str, content: str
@@ -426,6 +477,7 @@ class ProxmoxApi:
         node: str,
         storage: str,
         file_name: str | None = None,
+        content: str = "import",
     ) -> ApiResponse:
         endpoint = f"nodes/{node}/storage/{storage}/upload"
 
@@ -449,7 +501,7 @@ class ProxmoxApi:
             # packet capture and decode the ssl traffic with wireshark. The multipart data
             # has to be in this specific order, as well as the headers have to be in order.
             with aiohttp.MultipartWriter("form-data") as mpwriter:
-                content_part = mpwriter.append(b"import")
+                content_part = mpwriter.append(content.encode())
                 content_part.set_content_disposition("form-data", name="content")
 
                 file_part = mpwriter.append(payload)
