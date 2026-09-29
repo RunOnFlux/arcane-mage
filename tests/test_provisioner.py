@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -774,6 +774,23 @@ class TestWaitForTask:
         start = monotonic()
         assert await api.wait_for_task("UPID:x", "node1", max_wait_s=600) is False
         assert monotonic() - start < 2
+        assert api.last_task_error == "unable to create VM 268"
+
+    async def test_a_task_that_outruns_the_wait_says_so(self):
+        from arcane_mage.proxmox import ProxmoxApi
+
+        api = ProxmoxApi.__new__(ProxmoxApi)
+        api.get_task = AsyncMock(return_value=ApiResponse(status=200, payload={"status": "running"}))
+        assert await api.wait_for_task("UPID:x", "node1", max_wait_s=1) is False
+        assert api.last_task_error == "task still running after 1s"
+
+    async def test_an_unreadable_task_says_so(self):
+        from arcane_mage.proxmox import ProxmoxApi
+
+        api = ProxmoxApi.__new__(ProxmoxApi)
+        api.get_task = AsyncMock(return_value=ApiResponse(status=400, error="bad upid"))
+        assert await api.wait_for_task("UPID:x", "node1") is False
+        assert api.last_task_error == "task status unreadable (HTTP 400: bad upid)"
 
     async def test_a_running_task_is_waited_on_until_ok(self):
         from arcane_mage.proxmox import ProxmoxApi
@@ -784,3 +801,117 @@ class TestWaitForTask:
         api.get_task = AsyncMock(side_effect=[running, running, done])
         assert await api.wait_for_task("UPID:x", "node1", max_wait_s=600) is True
         assert api.get_task.await_count == 3
+        assert api.last_task_error is None
+
+
+class TestFailureReasons:
+    """A create that fails because its EFI import file is missing (staging 08-26) and one
+    that fails on a full disk both read "Unable to create VM on hypervisor", so a caller
+    could never retry the first safely. Proxmox's own task error now rides on the step.
+    And a failed upload can still land its file (prod 09-28, pve35), which then sat in
+    local:import for good once the retry picked another vmid."""
+
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Provisioner:
+        p = Provisioner(api=mock_api)
+        monkeypatch.setattr(p, "validate_api_version", AsyncMock(return_value=(True, None)))
+        monkeypatch.setattr(p, "validate_storage", AsyncMock(return_value=(True, None)))
+        monkeypatch.setattr(p, "validate_iso_version", AsyncMock(return_value=True))
+        monkeypatch.setattr(p, "validate_network", AsyncMock(return_value=True))
+        return p
+
+    @staticmethod
+    def fluxnode() -> MagicMock:
+        node = MagicMock()
+        node.to_dict.return_value = {}
+        hv = node.hypervisor
+        hv.node, hv.vm_name, hv.vm_id, hv.node_tier = "pve35", "fh-mt-187-c4", 264, "cumulus"
+        hv.network, hv.iso_name = "vmbr0", "FluxLive.iso"
+        hv.storage_images, hv.storage_iso, hv.storage_import = "local-lvm", "local", "local"
+        hv.disk_limit = hv.memory_mb = hv.cpu_limit = hv.network_limit = None
+        hv.startup_config = hv.tags = hv.description = None
+        hv.start_on_creation = True
+        return node
+
+    async def run(self, provisioner: Provisioner) -> list[str]:
+        failed: list[str] = []
+        ok = await provisioner.provision_node(
+            self.fluxnode(), callback=lambda good, msg: None if good else failed.append(msg)
+        )
+        assert ok is False
+        return failed
+
+    async def test_a_failed_create_carries_the_proxmox_task_error(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        why = "unable to create VM 264 - cannot import from 'local:import/264_arcane_efi.raw'"
+        mock_api.upload_file.return_value = ApiResponse(status=200, payload="UPID:up")
+        mock_api.create_vm.return_value = ApiResponse(status=200, payload="UPID:create")
+        mock_api.delete_file.return_value = ApiResponse(status=200, payload="UPID:del")
+
+        async def wait(task: str, node: str, max_wait_s: int = 10) -> bool:
+            mock_api.last_task_error = why if task == "UPID:create" else None
+            return task != "UPID:create"
+
+        mock_api.wait_for_task.side_effect = wait
+
+        assert await self.run(provisioner) == [f"Unable to create VM on hypervisor: {why}"]
+
+    async def test_a_refused_request_names_the_http_error(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.upload_file.return_value = ApiResponse(status=200, payload="UPID:up")
+        mock_api.wait_for_task.return_value = True
+        mock_api.last_task_error = None
+        mock_api.create_vm.return_value = ApiResponse(status=500, error="storage 'local-lvm' is full")
+        mock_api.delete_file.return_value = ApiResponse(status=200, payload="UPID:del")
+
+        assert await self.run(provisioner) == [
+            "Unable to create VM on hypervisor: HTTP 500: storage 'local-lvm' is full"
+        ]
+
+    async def test_a_failed_config_upload_deletes_its_own_file(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.upload_file.return_value = ApiResponse(status=200, payload="UPID:up")
+        mock_api.delete_file.return_value = ApiResponse(status=200, payload="UPID:del")
+
+        async def wait(task: str, node: str, max_wait_s: int = 10) -> bool:
+            mock_api.last_task_error = "task status request timed out" if task == "UPID:up" else None
+            return task != "UPID:up"
+
+        mock_api.wait_for_task.side_effect = wait
+
+        assert await self.run(provisioner) == [
+            "Unable to upload Config image to hypervisor: task status request timed out"
+        ]
+        # Only its own config image: the EFI was never uploaded, and the shared name may
+        # belong to another run on the host.
+        assert [c.args[0] for c in mock_api.delete_file.call_args_list] == ["264_arcane_config.raw"]
+        mock_api.create_vm.assert_not_called()
+
+    async def test_a_failed_efi_upload_deletes_both_of_its_files(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.upload_file.side_effect = [
+            ApiResponse(status=200, payload="UPID:config"),
+            ApiResponse(status=200, payload="UPID:efi"),
+        ]
+        mock_api.delete_file.return_value = ApiResponse(status=200, payload="UPID:del")
+
+        async def wait(task: str, node: str, max_wait_s: int = 10) -> bool:
+            mock_api.last_task_error = "no space left on device" if task == "UPID:efi" else None
+            return task != "UPID:efi"
+
+        mock_api.wait_for_task.side_effect = wait
+
+        assert await self.run(provisioner) == [
+            "Unable to upload EFI image to hypervisor: no space left on device"
+        ]
+        assert [c.args[0] for c in mock_api.delete_file.call_args_list] == [
+            "264_arcane_efi.raw",
+            "264_arcane_config.raw",
+        ]
+        mock_api.create_vm.assert_not_called()
