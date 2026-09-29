@@ -80,6 +80,13 @@ class ApiResponse:
         return self.status == 200 and not self.error
 
 
+def _unreadable_task(res: ApiResponse) -> str:
+    if res.timed_out:
+        return "task status request timed out"
+    detail = f"HTTP {res.status}: {res.error}" if res.error else f"HTTP {res.status}"
+    return f"task status unreadable ({detail})"
+
+
 class ProxmoxApi:
     """Async client for the Proxmox VE API, supporting token and user/password auth."""
 
@@ -410,12 +417,19 @@ class ProxmoxApi:
 
         return res
 
+    # Why the last ``wait_for_task`` returned False: Proxmox's own ``exitstatus`` (e.g.
+    # "unable to create VM 219 - cannot import from 'local:import/arcane_efi.raw' ..."),
+    # a timeout, or an unreadable task. None after a task that ended OK.
+    last_task_error: str | None = None
+
     async def wait_for_task(
         self, task_id: str, node: str, max_wait_s: int = 10
     ) -> bool:
+        self.last_task_error = None
         task_res = await self.get_task(task_id, node)
 
         if not task_res:
+            self.last_task_error = _unreadable_task(task_res)
             return False
 
         # A task is over when Proxmox says ``status: stopped``; ``exitstatus`` is then "OK"
@@ -434,13 +448,18 @@ class ProxmoxApi:
             task_res = await self.get_task(task_id, node)
 
             if not task_res:
+                self.last_task_error = _unreadable_task(task_res)
                 return False
 
             status = task_res.payload.get("status")
             exit_status = task_res.payload.get("exitstatus")
             elapsed = monotonic() - start
 
-        return exit_status == "OK"
+        if exit_status == "OK":
+            return True
+
+        self.last_task_error = exit_status or f"task still running after {max_wait_s}s"
+        return False
 
     async def delete_file(
         self, file_name: str, node: str, storage: str, content: str
