@@ -15,3 +15,4 @@ dev
 fluxnodes*.yaml
 .DS_Store
 .ruff_cache
+*.log

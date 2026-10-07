@@ -272,10 +272,6 @@ class FluxnodeNetworkConfig:
     router_address: str | None = None
     private_chain_sources: list[str] = Field(default_factory=list)
 
-    @property
-    def upnp_enabled(self) -> bool:
-        return bool(self.upnp_port)
-
     def to_dict(self) -> dict:
         return TypeAdapter(type(self)).dump_python(self, mode="json", exclude_defaults=True)
 
@@ -303,9 +299,11 @@ class FluxnodeNetworkConfig:
 
             filtered_chain_sources.append(chain_source)
 
+        # UPnP mode is not written: the port being set is the declaration, and the
+        # config reader derives it. Storing it as well would give one fact two homes
+        # that can disagree.
         config = {
             "network": {
-                "upnp_enabled": self.upnp_enabled,
                 "upnp_port": self.upnp_port,
                 "private_chain_sources": filtered_chain_sources,
                 "router_address": self.router_address,
