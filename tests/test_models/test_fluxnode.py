@@ -55,6 +55,19 @@ class TestFluxnodeConfig:
 
         assert config.notifications.discord.webhook_url is not None
 
+    def test_dev_token_roundtrip(self, fluxnode_dict: dict):
+        fluxnode_dict["dev_token"] = "eyJ2IjoxfQ.c2ln"
+        config = FluxnodeConfig.from_dict(fluxnode_dict)
+
+        assert config.dev_token == "eyJ2IjoxfQ.c2ln"
+        assert config.to_dict()["dev_token"] == "eyJ2IjoxfQ.c2ln"
+
+    def test_dev_token_absent_when_unset(self, fluxnode_dict: dict):
+        config = FluxnodeConfig.from_dict(fluxnode_dict)
+
+        assert config.dev_token is None
+        assert "dev_token" not in config.to_dict()
+
     def test_to_dict_roundtrip(self, fluxnode_dict: dict):
         config = FluxnodeConfig.from_dict(fluxnode_dict)
         result = config.to_dict()

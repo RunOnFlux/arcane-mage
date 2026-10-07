@@ -38,6 +38,9 @@ class FluxnodeConfig:
     network: FluxnodeNetworkConfig = Field(default_factory=FluxnodeNetworkConfig)
     notifications: Notifications = Field(default_factory=Notifications)
     delegate: Delegate | None = None
+    # Dev-channel enrolment token, one line, bound to `identity`; the installer
+    # verifies it against that identity. Nothing here reads it.
+    dev_token: str | None = None
 
     @classmethod
     def from_dict(cls, params: dict) -> FluxnodeConfig:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0
+
+### Added
+
+- **`FluxnodeConfig.dev_token`**: optional dev-channel enrolment token, written to the autoinstall config next to the identity it is bound to; the installer verifies it
+
 ## 2.0.0
 
 ### Breaking Changes
