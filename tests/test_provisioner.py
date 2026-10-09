@@ -7,7 +7,7 @@ import pytest
 
 from arcane_mage.models import ArcaneOsConfigGroup
 from arcane_mage.models.cluster import ClusterContext
-from arcane_mage.provisioner import TIER_CONFIG, Provisioner, is_api_min_version
+from arcane_mage.provisioner import SHUTDOWN_TIMEOUT_S, TIER_CONFIG, Provisioner, is_api_min_version
 from arcane_mage.proxmox import ApiResponse
 
 
@@ -264,12 +264,12 @@ class TestProvisionerValidation:
         assert result is False
 
     async def test_deprovision_node_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        """VM found, running, stopped, then deleted."""
+        """VM found, running, shut down gracefully, then deleted — no hard stop."""
         mock_api.get_vms.return_value = ApiResponse(
             status=200,
             payload=[{"vmid": 100, "name": "graham", "status": "running"}],
         )
-        mock_api.stop_vm.return_value = ApiResponse(status=200, payload="UPID:stop1")
+        mock_api.shutdown_vm.return_value = ApiResponse(status=200, payload="UPID:shut1")
         mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
         mock_api.wait_for_task.return_value = True
 
@@ -280,8 +280,61 @@ class TestProvisionerValidation:
         result = await provisioner.deprovision_node(fluxnode)
 
         assert result is True
+        mock_api.shutdown_vm.assert_called_once_with(100, "bigchug", SHUTDOWN_TIMEOUT_S)
+        mock_api.stop_vm.assert_not_called()
+        mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+
+    async def test_deprovision_falls_back_to_stop_when_shutdown_hangs(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        """The guest ignores ACPI: the shutdown task fails, the VM is hard-stopped, then deleted."""
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 100, "name": "graham", "status": "running"}],
+        )
+        mock_api.shutdown_vm.return_value = ApiResponse(status=200, payload="UPID:shut1")
+        mock_api.stop_vm.return_value = ApiResponse(status=200, payload="UPID:stop1")
+        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.wait_for_task.side_effect = lambda upid, *_: upid != "UPID:shut1"
+
+        messages = []
+        result = await provisioner.deprovision_vm(
+            "bigchug", callback=lambda ok, msg: messages.append((ok, msg)), vm_name="graham"
+        )
+
+        assert result is True
         mock_api.stop_vm.assert_called_once_with(100, "bigchug")
         mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+        assert any("did not shut down" in msg for _, msg in messages)
+
+    async def test_deprovision_fails_when_shutdown_and_stop_both_fail(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 100, "name": "graham", "status": "running"}],
+        )
+        mock_api.shutdown_vm.return_value = ApiResponse(error="Connection refused")
+        mock_api.stop_vm.return_value = ApiResponse(error="Connection refused")
+
+        result = await provisioner.deprovision_vm("bigchug", vm_name="graham")
+
+        assert result is False
+        mock_api.delete_vm.assert_not_called()
+
+    async def test_deprovision_stopped_vm_skips_shutdown(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_vms.return_value = ApiResponse(
+            status=200,
+            payload=[{"vmid": 100, "name": "graham", "status": "stopped"}],
+        )
+        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.wait_for_task.return_value = True
+
+        result = await provisioner.deprovision_vm("bigchug", vm_name="graham")
+
+        assert result is True
+        mock_api.shutdown_vm.assert_not_called()
+        mock_api.stop_vm.assert_not_called()
 
     async def test_deprovision_node_vm_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_vms.return_value = ApiResponse(
