@@ -119,6 +119,12 @@ def _get_vm_efi_file_name(vm_id: int) -> str:
 CREATE_TASK_MAX_WAIT_S = 600
 UPLOAD_TASK_MAX_WAIT_S = 120
 
+# Teardown asks the guest to shut down (ACPI) so ArcaneOS can stop fluxd and its apps
+# cleanly — including removing its UPnP port mappings — and only hard-stops a VM that has
+# not gone down by then. Keep the total (shutdown + stop + delete) inside the agent's
+# 240 s delete timeout.
+SHUTDOWN_TIMEOUT_S = 120
+
 
 async def get_latest_iso_version() -> str | None:
     """Fetch the latest FluxOS ISO version from the release API."""
@@ -485,6 +491,15 @@ class Provisioner:
 
         return bool(network_exists)
 
+    async def shutdown_vm(self, vm_id: int, node: str) -> bool:
+        """Ask the guest to shut down and wait for it. False if it did not go down in time."""
+        res = await self.api.shutdown_vm(vm_id, node, SHUTDOWN_TIMEOUT_S)
+
+        if not res:
+            return False
+
+        return await self.api.wait_for_task(res.payload, node, SHUTDOWN_TIMEOUT_S + 10)
+
     async def stop_vm(self, vm_id: int, node: str) -> bool:
         """Stop a VM and wait for the task to complete."""
         res = await self.api.stop_vm(vm_id, node)
@@ -511,20 +526,26 @@ class Provisioner:
         node: str,
         callback: Callable[[bool, str], None] | None = None,
     ) -> bool:
-        """Stop a VM (if running) then delete it with its disks."""
+        """Shut a running VM down (hard stop as the fallback), then delete it with its disks."""
         if callback:
             callback(True, f"Found VM {vm_name} (id={vm_id}, status={vm_status})")
 
         if vm_status == "running":
             if callback:
-                callback(True, "Stopping VM...")
-            stopped = await self.stop_vm(vm_id, node)
-            if not stopped:
+                callback(True, "Shutting down VM...")
+            if await self.shutdown_vm(vm_id, node):
                 if callback:
-                    callback(False, "Failed to stop VM")
-                return False
-            if callback:
-                callback(True, "VM stopped")
+                    callback(True, "VM shut down")
+            else:
+                if callback:
+                    callback(True, f"VM did not shut down within {SHUTDOWN_TIMEOUT_S}s, stopping...")
+                stopped = await self.stop_vm(vm_id, node)
+                if not stopped:
+                    if callback:
+                        callback(False, "Failed to stop VM")
+                    return False
+                if callback:
+                    callback(True, "VM stopped")
 
         if callback:
             callback(True, "Deleting VM and disks...")
