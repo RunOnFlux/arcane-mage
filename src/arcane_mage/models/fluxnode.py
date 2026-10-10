@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import aiofiles
 import yaml
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, model_validator
 from pydantic.dataclasses import Field
 from pydantic.dataclasses import dataclass as py_dataclass
 
@@ -17,14 +18,37 @@ from .notifications import Notifications
 
 @py_dataclass
 class GravityConfig:
-    """Runtime flags for the Gravity daemon (debug, development, testnet modes)."""
+    """Runtime flags for the Gravity daemon (debug, development modes)."""
 
     debug: bool = False
     development: bool = False
-    testnet: bool = False
 
     def to_dict(self) -> dict:
         return TypeAdapter(type(self)).dump_python(self, mode="json", exclude_defaults=True)
+
+
+COMPRESSED_PUBKEY = re.compile(r"0[23][0-9a-f]{64}")
+
+
+@py_dataclass
+class FluxnodeChainConfig:
+    """The network the node installs onto, fixed at install: absent, mainnet;
+    for a lab, labnet and the lab's compressed public key. The installer checks
+    the identity key belongs to it."""
+
+    network: Literal["mainnet", "labnet"] = "mainnet"
+    key: str | None = None
+
+    @model_validator(mode="after")
+    def check_key(self) -> FluxnodeChainConfig:
+        if self.network == "labnet":
+            key = (self.key or "").lower()
+            if not COMPRESSED_PUBKEY.fullmatch(key):
+                raise ValueError("labnet needs key: the lab's compressed public key (66 hex, 02/03)")
+            self.key = key
+        elif self.key is not None:
+            raise ValueError("key is for labnet only")
+        return self
 
 
 @py_dataclass
@@ -41,6 +65,7 @@ class FluxnodeConfig:
     # Dev-channel enrolment token, one line, bound to `identity`; the installer
     # verifies it against that identity. Nothing here reads it.
     dev_token: str | None = None
+    chain: FluxnodeChainConfig | None = None
 
     @classmethod
     def from_dict(cls, params: dict) -> FluxnodeConfig:
