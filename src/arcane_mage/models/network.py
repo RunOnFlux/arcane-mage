@@ -67,12 +67,7 @@ class Link:
     @property
     def ethernet(self) -> bool:
         # not sure how this applies for wlan interfaces as I don't have one to test
-        return (
-            self.kind is None
-            and self.name != "lo"
-            and bool(self.address)
-            and self.address != "00:00:00:00:00:00"
-        )
+        return self.kind is None and self.name != "lo" and bool(self.address) and self.address != "00:00:00:00:00:00"
 
 
 @py_dataclass
@@ -137,11 +132,7 @@ class Route:
         if not isinstance(other, Route):
             return False
 
-        return (
-            self.dst == other.dst
-            and self.link == other.link
-            and self.gateway == other.gateway
-        )
+        return self.dst == other.dst and self.link == other.link and self.gateway == other.gateway
 
 
 @py_dataclass
@@ -264,6 +255,20 @@ class NetworkConfig:
         return confs
 
 
+def chain_source_address(ip: IPv4Address, *, labnet: bool) -> bool:
+    """Whether a node may stream its chain from `ip`: a unicast address on a LAN,
+    or, installing onto labnet, on labnet's internet too. Loopback, link-local,
+    multicast, unspecified, reserved and broadcast addresses are never a source,
+    though Python counts several of them private."""
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+        return False
+    if ip == IPv4Address("255.255.255.255"):
+        return False
+    if ip.is_private:
+        return True
+    return labnet and ip.is_global
+
+
 @py_dataclass
 class FluxnodeNetworkConfig:
     """Fluxnode-specific network settings such as UPnP and private chain sources."""
@@ -275,7 +280,10 @@ class FluxnodeNetworkConfig:
     def to_dict(self) -> dict:
         return TypeAdapter(type(self)).dump_python(self, mode="json", exclude_defaults=True)
 
-    async def write_installer_config(self, file_path: Path | str) -> bool:
+    async def write_installer_config(self, file_path: Path | str, *, labnet: bool = False) -> bool:
+        """Writes the installer's network section. A chain source is kept only at a
+        unicast address a node can stream from: on a LAN, or, for a node installing
+        onto labnet, also on labnet's internet, where the lab's donor answers."""
         # we let the configure app set the local chain sources
         ip_pattern = r"^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$"
         port_pattern = (
@@ -294,7 +302,7 @@ class FluxnodeNetworkConfig:
             if not re.match(ip_pattern, ip) or not re.match(port_pattern, port):
                 continue
 
-            if not IPv4Address(ip).is_private:
+            if not chain_source_address(IPv4Address(ip), labnet=labnet):
                 continue
 
             filtered_chain_sources.append(chain_source)

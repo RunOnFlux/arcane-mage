@@ -59,7 +59,10 @@ class ArcaneOsConfig:
         ]
 
     async def write_installer_config(self, file_path: Path) -> bool:
-        res = await self.fluxnode.network.write_installer_config(file_path)
+        chain = self.fluxnode.chain
+        res = await self.fluxnode.network.write_installer_config(
+            file_path, labnet=chain is not None and chain.network == "labnet"
+        )
 
         return res
 
