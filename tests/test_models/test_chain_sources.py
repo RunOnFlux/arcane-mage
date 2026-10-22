@@ -77,3 +77,34 @@ async def test_a_mainnet_install_drops_what_is_no_lan_source(tmp_path: Path, min
     kept = await written_sources(tmp_path, minimal_node_dict, [source], None)
 
     assert kept == []
+
+
+async def written_params_source(tmp_path: Path, node: dict, source: str | None, chain: dict | None) -> str | None:
+    node["fluxnode"]["network"] = {"private_chain_sources": ["192.168.1.20:16127"], "params_source": source}
+    if chain is not None:
+        node["fluxnode"]["chain"] = chain
+    path = tmp_path / "installer.yaml"
+    assert await ArcaneOsConfig.from_dict(node).write_installer_config(path)
+    return yaml.safe_load(path.read_text())["network"].get("params_source")
+
+
+async def test_a_params_source_is_written_where_a_chain_source_would_be(tmp_path: Path, minimal_node_dict: dict):
+    assert (
+        await written_params_source(tmp_path, minimal_node_dict, "172.16.32.150:16127", None) == "172.16.32.150:16127"
+    )
+
+
+async def test_no_params_source_is_written_when_none_is_given(tmp_path: Path, minimal_node_dict: dict):
+    assert await written_params_source(tmp_path, minimal_node_dict, None, None) is None
+
+
+@pytest.mark.parametrize("source", ["8.8.8.8:16127", "127.0.0.1:16127", "172.16.32.150", "nonsense"])
+async def test_a_params_source_a_chain_source_could_not_be_is_dropped(
+    tmp_path: Path, minimal_node_dict: dict, source: str
+):
+    assert await written_params_source(tmp_path, minimal_node_dict, source, None) is None
+
+
+async def test_a_labnet_install_keeps_a_params_source_on_labnets_internet(tmp_path: Path, minimal_node_dict: dict):
+    labnet = {"network": "labnet", "key": LAB_KEY}
+    assert await written_params_source(tmp_path, minimal_node_dict, "25.47.0.2:16127", labnet) == "25.47.0.2:16127"

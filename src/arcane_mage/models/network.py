@@ -276,6 +276,8 @@ class FluxnodeNetworkConfig:
     upnp_port: int | None = None
     router_address: str | None = None
     private_chain_sources: list[str] = Field(default_factory=list)
+    # Where the node fetches fluxd's zk params (`ip:port`); unset, from Flux's download host.
+    params_source: str | None = None
 
     def to_dict(self) -> dict:
         return TypeAdapter(type(self)).dump_python(self, mode="json", exclude_defaults=True)
@@ -291,21 +293,16 @@ class FluxnodeNetworkConfig:
             r"(?:\s?,\s?(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))*$"
         )
 
-        filtered_chain_sources = []
-
-        for chain_source in self.private_chain_sources:
+        def source_kept(source: str) -> bool:
             try:
-                ip, port = chain_source.split(":")
+                ip, port = source.split(":")
             except ValueError:
-                continue
-
+                return False
             if not re.match(ip_pattern, ip) or not re.match(port_pattern, port):
-                continue
+                return False
+            return chain_source_address(IPv4Address(ip), labnet=labnet)
 
-            if not chain_source_address(IPv4Address(ip), labnet=labnet):
-                continue
-
-            filtered_chain_sources.append(chain_source)
+        filtered_chain_sources = [s for s in self.private_chain_sources if source_kept(s)]
 
         # UPnP mode is not written: the port being set is the declaration, and the
         # config reader derives it. Storing it as well would give one fact two homes
@@ -317,6 +314,9 @@ class FluxnodeNetworkConfig:
                 "router_address": self.router_address,
             }
         }
+        # A params source is kept only where a chain source would be.
+        if self.params_source and source_kept(self.params_source):
+            config["network"]["params_source"] = self.params_source
 
         writeable_config = yaml.dump(
             config,
