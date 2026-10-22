@@ -60,8 +60,7 @@ class Delegate:
         has_raw = self.delegate_private_key is not None
         if has_encrypted and has_raw:
             raise ValueError(
-                "Provide either delegate_private_key_encrypted or "
-                "delegate_private_key + delegate_passphrase, not both"
+                "Provide either delegate_private_key_encrypted or delegate_private_key + delegate_passphrase, not both"
             )
 
         return self

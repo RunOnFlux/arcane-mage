@@ -23,9 +23,7 @@ class WelcomeScreen(Screen):
         yield Header(show_clock=True)
         with Container():
             with Vertical():
-                yield Label(
-                    "Welcome to the Arcane Creator. Select your operation mode."
-                )
+                yield Label("Welcome to the Arcane Creator. Select your operation mode.")
             with Horizontal():
                 yield Button(
                     "Proxmox Provisioner",

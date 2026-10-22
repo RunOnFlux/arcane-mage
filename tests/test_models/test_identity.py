@@ -74,4 +74,3 @@ class TestIdentityRoundtrip:
         result = identity.to_dict()
 
         assert result == identity_dict
-

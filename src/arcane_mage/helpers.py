@@ -55,9 +55,7 @@ class ExecBinaryError(ChildProcessError):
         return self.__stderr.decode(errors="ignore")
 
     def __str__(self) -> str:
-        return "Failed to execute '{}', error: {}".format(
-            " ".join(self.__cmd), self.stderr()
-        )
+        return "Failed to execute '{}', error: {}".format(" ".join(self.__cmd), self.stderr())
 
 
 def demote(user_uid: int, user_gid: int) -> Callable[[], None]:
@@ -260,9 +258,7 @@ async def do_http_iter(
                     resp: ClientResponse
 
                     if resp.status in [429, 500, 502, 503, 504]:
-                        log.warning(
-                            "URL: %s, Status: %s... retrying", url, resp.status
-                        )
+                        log.warning("URL: %s, Status: %s... retrying", url, resp.status)
                         if remaining or not max_tries:
                             await asyncio.sleep(retry_interval)
 

@@ -14,7 +14,6 @@ import os
 import sys
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 from rich.console import Console
@@ -145,9 +144,9 @@ def _resolve_hypervisor(hypervisor: str) -> ResolvedConnection:
 
 
 def _resolve_connection(
-    url: Optional[str],
-    token: Optional[str],
-    hypervisor: Optional[str],
+    url: str | None,
+    token: str | None,
+    hypervisor: str | None,
 ) -> ResolvedConnection:
     """Resolve URL and parsed token from flags, env vars, stdin, or stored hypervisor."""
     if hypervisor:
@@ -184,7 +183,9 @@ def _load_configs(config: str) -> ArcaneOsConfigGroup:
 
 @app.callback()
 def main(
-    version: Optional[bool] = typer.Option(None, "-v", "--version", callback=version_callback, is_eager=True, help="Show the application version"),
+    version: bool | None = typer.Option(
+        None, "-v", "--version", callback=version_callback, is_eager=True, help="Show the application version"
+    ),
 ) -> None:
     pass
 
@@ -197,10 +198,7 @@ def tui(
     try:
         from .arcane_mage import ArcaneMage
     except ModuleNotFoundError:
-        raise SystemExit(
-            "arcane-mage TUI requires the 'tui' extra.\n"
-            "Install with: uv add arcane-mage[tui]"
-        ) from None
+        raise SystemExit("arcane-mage TUI requires the 'tui' extra.\nInstall with: uv add arcane-mage[tui]") from None
 
     tui_app = ArcaneMage(fluxnode_config=config)
     tui_app.run()
@@ -208,12 +206,12 @@ def tui(
 
 @app.command()
 def provision(
-    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
-    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
-    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: str | None = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: str | None = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
     config: str = typer.Option("fluxnodes.yaml", "-c", "--config", help="The config file"),
-    node_filter: Optional[str] = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
-    start: Optional[bool] = typer.Option(None, "--start/--no-start", help="Override start_on_creation setting"),
+    node_filter: str | None = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
+    start: bool | None = typer.Option(None, "--start/--no-start", help="Override start_on_creation setting"),
     use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
 ) -> None:
     """Provision Fluxnodes on a Proxmox hypervisor via the API."""
@@ -250,7 +248,7 @@ def provision(
 
                 steps: list[dict[str, object]] = []
 
-                def callback(ok: bool, msg: str):
+                def callback(ok: bool, msg: str, steps: list[dict[str, object]] = steps):
                     steps.append({"ok": ok, "message": msg})
                     if not use_json:
                         mark = _CHECK_MARK if ok else _CROSS_MARK
@@ -264,15 +262,17 @@ def provision(
 
                 if not use_json:
                     if result:
-                        console.print(f"  [bold green]Provisioned successfully[/bold green]")
+                        console.print("  [bold green]Provisioned successfully[/bold green]")
                     else:
-                        console.print(f"  [bold red]Provisioning failed[/bold red]")
+                        console.print("  [bold red]Provisioning failed[/bold red]")
 
                 if not result:
                     all_ok = False
 
             if use_json:
-                print(_json_ok({"nodes": results}) if all_ok else _json_error("Provisioning failed", {"nodes": results}))
+                print(
+                    _json_ok({"nodes": results}) if all_ok else _json_error("Provisioning failed", {"nodes": results})
+                )
 
             return all_ok
 
@@ -287,13 +287,13 @@ def provision(
 
 @app.command()
 def deprovision(
-    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
-    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
-    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
-    config: Optional[str] = typer.Option(None, "-c", "--config", help="The config file"),
-    vm_name: Optional[str] = typer.Option(None, "--vm-name", help="Target a specific VM by name"),
-    vm_id: Optional[int] = typer.Option(None, "--vm-id", help="Target a specific VM by ID"),
-    node_filter: Optional[str] = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
+    url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: str | None = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: str | None = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    config: str | None = typer.Option(None, "-c", "--config", help="The config file"),
+    vm_name: str | None = typer.Option(None, "--vm-name", help="Target a specific VM by name"),
+    vm_id: int | None = typer.Option(None, "--vm-id", help="Target a specific VM by ID"),
+    node_filter: str | None = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
     use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
 ) -> None:
@@ -324,6 +324,7 @@ def deprovision(
         _handle_error(e, use_json)
 
     if direct_vm:
+
         async def run_direct():
             async with ProxmoxApi.from_token(conn.url, conn.token) as api:
                 provisioner = Provisioner(api)
@@ -362,7 +363,7 @@ def deprovision(
                 vm_status = found_vm.get("status", "unknown")
 
                 if not force and not use_json:
-                    console.print(f"[bold red]This will stop and delete:[/bold red]")
+                    console.print("[bold red]This will stop and delete:[/bold red]")
                     console.print(f"  VM:     {vm_display} (id={found_vm['vmid']})")
                     console.print(f"  Node:   {found_node}")
                     console.print(f"  Status: {vm_status}")
@@ -371,7 +372,7 @@ def deprovision(
 
                 steps: list[dict[str, object]] = []
 
-                def callback(ok: bool, msg: str):
+                def callback(ok: bool, msg: str, steps: list[dict[str, object]] = steps):
                     steps.append({"ok": ok, "message": msg})
                     if not use_json:
                         mark = _CHECK_MARK if ok else _CROSS_MARK
@@ -381,7 +382,11 @@ def deprovision(
                     console.print(f"\n[bold]{vm_display}[/bold]")
 
                 result = await provisioner._stop_and_delete_vm(
-                    found_vm["vmid"], vm_display, vm_status, found_node, callback,
+                    found_vm["vmid"],
+                    vm_display,
+                    vm_status,
+                    found_node,
+                    callback,
                 )
 
                 vm_info = {"vm_name": vm_display, "vm_id": found_vm["vmid"], "node": found_node, "steps": steps}
@@ -390,9 +395,9 @@ def deprovision(
                     print(_json_ok(vm_info) if result else _json_error("Deprovisioning failed", vm_info))
                 else:
                     if result:
-                        console.print(f"  [bold green]Deprovisioned successfully[/bold green]")
+                        console.print("  [bold green]Deprovisioned successfully[/bold green]")
                     else:
-                        console.print(f"  [bold red]Deprovisioning failed[/bold red]")
+                        console.print("  [bold red]Deprovisioning failed[/bold red]")
 
                 return result
 
@@ -418,7 +423,7 @@ def deprovision(
         _handle_error(CliError(f"No nodes match filter '{node_filter}'"), use_json)
 
     if not force and not use_json:
-        console.print(f"[bold red]This will stop and delete the following VMs:[/bold red]")
+        console.print("[bold red]This will stop and delete the following VMs:[/bold red]")
         for node in nodes:
             hyper_node = node.hypervisor.node if node.hypervisor else "?"
             vm = node.hypervisor.vm_name if node.hypervisor else node.system.hostname
@@ -436,7 +441,7 @@ def deprovision(
                 hostname = node.system.hostname
                 steps: list[dict[str, object]] = []
 
-                def callback(ok: bool, msg: str):
+                def callback(ok: bool, msg: str, steps: list[dict[str, object]] = steps):
                     steps.append({"ok": ok, "message": msg})
                     if not use_json:
                         mark = _CHECK_MARK if ok else _CROSS_MARK
@@ -450,15 +455,17 @@ def deprovision(
 
                 if not use_json:
                     if result:
-                        console.print(f"  [bold green]Deprovisioned successfully[/bold green]")
+                        console.print("  [bold green]Deprovisioned successfully[/bold green]")
                     else:
-                        console.print(f"  [bold red]Deprovisioning failed[/bold red]")
+                        console.print("  [bold red]Deprovisioning failed[/bold red]")
 
                 if not result:
                     all_ok = False
 
             if use_json:
-                print(_json_ok({"nodes": results}) if all_ok else _json_error("Deprovisioning failed", {"nodes": results}))
+                print(
+                    _json_ok({"nodes": results}) if all_ok else _json_error("Deprovisioning failed", {"nodes": results})
+                )
 
             return all_ok
 
@@ -473,11 +480,11 @@ def deprovision(
 
 @app.command()
 def validate(
-    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
-    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
-    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: str | None = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: str | None = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
     config: str = typer.Option("fluxnodes.yaml", "-c", "--config", help="The config file"),
-    node_filter: Optional[str] = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
+    node_filter: str | None = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
     use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
 ) -> None:
     """Check config, API connectivity, storage, ISO, and network without provisioning."""
@@ -511,27 +518,62 @@ def validate(
                 hyper = node.hypervisor
 
                 if not hyper:
-                    results.append({"hostname": hostname, "ok": False, "checks": [{"check": "hypervisor", "ok": False, "message": "No hypervisor config"}]})
+                    results.append(
+                        {
+                            "hostname": hostname,
+                            "ok": False,
+                            "checks": [{"check": "hypervisor", "ok": False, "message": "No hypervisor config"}],
+                        }
+                    )
                     if not use_json:
-                        console.print(Panel(f"[red]No hypervisor config[/red]", title=f"[bold]{hostname}[/bold]", border_style="red"))
+                        console.print(
+                            Panel(
+                                "[red]No hypervisor config[/red]", title=f"[bold]{hostname}[/bold]", border_style="red"
+                            )
+                        )
                     all_ok = False
                     continue
 
                 checks = []
 
                 api_ok, api_msg = await provisioner.validate_api_version(hyper.node)
-                checks.append({"check": "api_version", "ok": api_ok, "message": api_msg if not api_ok else f"v{api_msg}"})
+                checks.append(
+                    {"check": "api_version", "ok": api_ok, "message": api_msg if not api_ok else f"v{api_msg}"}
+                )
 
                 storage_ok, storage_msg = await provisioner.validate_storage(
-                    hyper.node, hyper.storage_iso, hyper.storage_images, hyper.storage_import,
+                    hyper.node,
+                    hyper.storage_iso,
+                    hyper.storage_images,
+                    hyper.storage_import,
                 )
-                checks.append({"check": "storage", "ok": storage_ok, "message": storage_msg if storage_msg else f"iso={hyper.storage_iso}, images={hyper.storage_images}, import={hyper.storage_import}"})
+                checks.append(
+                    {
+                        "check": "storage",
+                        "ok": storage_ok,
+                        "message": storage_msg
+                        if storage_msg
+                        else f"iso={hyper.storage_iso}, images={hyper.storage_images}, import={hyper.storage_import}",
+                    }
+                )
 
                 iso_ok = await provisioner.validate_iso_version(hyper.node, hyper.iso_name, hyper.storage_iso)
-                checks.append({"check": "iso", "ok": iso_ok, "message": f"{hyper.iso_name} not found" if not iso_ok else hyper.iso_name})
+                checks.append(
+                    {
+                        "check": "iso",
+                        "ok": iso_ok,
+                        "message": f"{hyper.iso_name} not found" if not iso_ok else hyper.iso_name,
+                    }
+                )
 
                 net_ok = await provisioner.validate_network(hyper.node, hyper.network)
-                checks.append({"check": "network", "ok": net_ok, "message": f"Bridge {hyper.network} not found" if not net_ok else hyper.network})
+                checks.append(
+                    {
+                        "check": "network",
+                        "ok": net_ok,
+                        "message": f"Bridge {hyper.network} not found" if not net_ok else hyper.network,
+                    }
+                )
 
                 node_ok = all(c["ok"] for c in checks)
                 results.append({"hostname": hostname, "node": hyper.node, "ok": node_ok, "checks": checks})
@@ -550,7 +592,9 @@ def validate(
                         table.add_row(mark, c["check"].replace("_", " ").title(), detail)
 
                     border = "green" if node_ok else "red"
-                    console.print(Panel(table, title=f"[bold]{hostname}[/bold] @ [bold]{hyper.node}[/bold]", border_style=border))
+                    console.print(
+                        Panel(table, title=f"[bold]{hostname}[/bold] @ [bold]{hyper.node}[/bold]", border_style=border)
+                    )
 
             if use_json:
                 print(_json_ok({"nodes": results}) if all_ok else _json_error("Validation failed", {"nodes": results}))
@@ -568,9 +612,9 @@ def validate(
 
 @app.command()
 def ping(
-    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
-    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
-    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: str | None = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: str | None = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
     use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
 ) -> None:
     """Test connectivity and authentication to a Proxmox hypervisor."""
@@ -635,11 +679,11 @@ def ping(
 
 @app.command()
 def status(
-    url: Optional[str] = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
-    token: Optional[str] = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
-    hypervisor: Optional[str] = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: str | None = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: str | None = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
     config: str = typer.Option("fluxnodes.yaml", "-c", "--config", help="The config file"),
-    node_filter: Optional[str] = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
+    node_filter: str | None = typer.Option(None, "--node", help="Cluster node to target (e.g. pve1)"),
     use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
 ) -> None:
     """Show which configured nodes are already provisioned on the hypervisor."""
@@ -693,12 +737,14 @@ def status(
                         provisioned = True
                         break
 
-                results.append({
-                    "hostname": hostname,
-                    "vm_name": hyper.vm_name,
-                    "node": hyper.node,
-                    "provisioned": provisioned,
-                })
+                results.append(
+                    {
+                        "hostname": hostname,
+                        "vm_name": hyper.vm_name,
+                        "node": hyper.node,
+                        "provisioned": provisioned,
+                    }
+                )
 
                 status_text = "[green]provisioned[/green]" if provisioned else "[yellow]not provisioned[/yellow]"
                 table.add_row(hostname, hyper.vm_name, hyper.node, status_text)

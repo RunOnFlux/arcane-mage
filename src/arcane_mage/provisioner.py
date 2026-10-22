@@ -139,9 +139,7 @@ class Provisioner:
 
         return cls(api)
 
-    async def discover_nodes(
-        self, all_configs: ArcaneOsConfigGroup
-    ) -> HypervisorDiscovery | None:
+    async def discover_nodes(self, all_configs: ArcaneOsConfigGroup) -> HypervisorDiscovery | None:
         """Discover hypervisor nodes and match against known configurations.
 
         Returns the usable nodes and their provisioned VMs, or None on failure.
@@ -347,7 +345,11 @@ class Provisioner:
             return False
 
         return await self._stop_and_delete_vm(
-            vm["vmid"], hyper.vm_name, vm.get("status", "unknown"), hyper.node, callback,
+            vm["vmid"],
+            hyper.vm_name,
+            vm.get("status", "unknown"),
+            hyper.node,
+            callback,
         )
 
     async def deprovision_vm(
@@ -386,7 +388,11 @@ class Provisioner:
             return False
 
         return await self._stop_and_delete_vm(
-            vm["vmid"], vm.get("name", str(vm["vmid"])), vm.get("status", "unknown"), node, callback,
+            vm["vmid"],
+            vm.get("name", str(vm["vmid"])),
+            vm.get("status", "unknown"),
+            node,
+            callback,
         )
 
     async def start_vm(self, vm_id: int, node: str) -> bool:
@@ -516,8 +522,7 @@ class Provisioner:
 
         return VmConfig(
             efidisk0=(
-                f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,"
-                f"import-from={storage_import}:import/arcane_efi.raw"
+                f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,import-from={storage_import}:import/arcane_efi.raw"
             ),
             cpu="host",
             ostype="l26",

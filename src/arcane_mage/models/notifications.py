@@ -141,4 +141,3 @@ class Notifications:
         raw = TypeAdapter(type(self)).dump_python(self, mode="json", exclude_none=True)
         # Remove empty nested dicts (e.g. discord/telegram with no configured values)
         return {k: v for k, v in raw.items() if v}
-

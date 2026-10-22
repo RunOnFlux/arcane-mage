@@ -98,12 +98,15 @@ class TestFluxnodeChain:
         config = FluxnodeConfig.from_dict({**fluxnode_dict, "chain": {"network": "labnet", "key": LAB_KEY.upper()}})
         assert config.to_dict()["chain"] == {"network": "labnet", "key": LAB_KEY}
 
-    @pytest.mark.parametrize("chain", [
-        {"network": "labnet"},
-        {"network": "labnet", "key": "04" + LAB_KEY[2:]},
-        {"network": "mainnet", "key": LAB_KEY},
-        {"network": "testnet"},
-    ])
+    @pytest.mark.parametrize(
+        "chain",
+        [
+            {"network": "labnet"},
+            {"network": "labnet", "key": "04" + LAB_KEY[2:]},
+            {"network": "mainnet", "key": LAB_KEY},
+            {"network": "testnet"},
+        ],
+    )
     def test_bad_chains_are_refused(self, fluxnode_dict: dict, chain: dict):
         with pytest.raises(ValueError):
             FluxnodeConfig.from_dict({**fluxnode_dict, "chain": chain})

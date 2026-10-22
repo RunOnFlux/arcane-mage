@@ -282,7 +282,9 @@ class TestProvisionerValidation:
         )
 
         messages = []
-        result = await provisioner.deprovision_vm("bigchug", callback=lambda ok, msg: messages.append((ok, msg)), vm_name="graham")
+        result = await provisioner.deprovision_vm(
+            "bigchug", callback=lambda ok, msg: messages.append((ok, msg)), vm_name="graham"
+        )
 
         assert result is False
         assert any("not found" in msg for _, msg in messages)

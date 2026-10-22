@@ -46,9 +46,7 @@ class ArcaneMage(App):
         self.push_screen("welcome")
 
         if self.config.default_page == "welcome-proxmox":
-            screen = WelcomeScreenProxmox(
-                self.config.hypervisors, self.fluxnodes, is_homepage=True
-            )
+            screen = WelcomeScreenProxmox(self.config.hypervisors, self.fluxnodes, is_homepage=True)
             self.install_screen(screen, name="welcome-proxmox")
             self.push_screen("welcome-proxmox")
 
@@ -66,9 +64,7 @@ class ArcaneMage(App):
         screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
         screen.validate_hypervisors(hypervisor)
 
-    def del_hypervisor_callback(
-        self, hypervisor: HypervisorConfig, delete: bool
-    ) -> None:
+    def del_hypervisor_callback(self, hypervisor: HypervisorConfig, delete: bool) -> None:
         if not delete:
             return
 
@@ -76,17 +72,13 @@ class ArcaneMage(App):
         screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
         screen.validate_hypervisors()
 
-    async def provision_node_callback(
-        self, fluxnode: ArcaneOsConfig | None, delete_efi: bool = True
-    ) -> Worker | None:
+    async def provision_node_callback(self, fluxnode: ArcaneOsConfig | None, delete_efi: bool = True) -> Worker | None:
         if not fluxnode or not fluxnode.hypervisor:
             return None
 
         vm_name = fluxnode.hypervisor.vm_name
         total_steps = 9 if fluxnode.hypervisor.start_on_creation else 8
-        info_screen = ProvisioningInfoScreen(
-            vm_name=vm_name, total_steps=total_steps
-        )
+        info_screen = ProvisioningInfoScreen(vm_name=vm_name, total_steps=total_steps)
 
         # this is a bit rugged
         mounted = self.push_screen(info_screen)
@@ -103,12 +95,8 @@ class ArcaneMage(App):
 
     @on(ScreenRequested)
     def on_screen_requested(self, event: ScreenRequested) -> None:
-        if event.screen == "welcome-proxmox" and not self.is_screen_installed(
-            "welcome-proxmox"
-        ):
-            screen = WelcomeScreenProxmox(
-                self.config.hypervisors, self.fluxnodes
-            )
+        if event.screen == "welcome-proxmox" and not self.is_screen_installed("welcome-proxmox"):
+            screen = WelcomeScreenProxmox(self.config.hypervisors, self.fluxnodes)
             self.install_screen(screen, name="welcome-proxmox")
         elif event.screen != "welcome-proxmox":
             self.notify("Not implemented yet")
@@ -123,9 +111,7 @@ class ArcaneMage(App):
         # this is blocking but meh
         self.config.update_default_page(default)
 
-    def edit_hypervisor_callback(
-        self, old: HypervisorConfig, new: HypervisorConfig | None
-    ) -> None:
+    def edit_hypervisor_callback(self, old: HypervisorConfig, new: HypervisorConfig | None) -> None:
         if not new:
             return
 
@@ -146,18 +132,14 @@ class ArcaneMage(App):
         )
 
     @on(WelcomeScreenProxmox.EditHypervisor)
-    def on_edit_hypervisor(
-        self, event: WelcomeScreenProxmox.EditHypervisor
-    ) -> None:
+    def on_edit_hypervisor(self, event: WelcomeScreenProxmox.EditHypervisor) -> None:
         self.push_screen(
             AddHypervisorScreen(self.config.use_keyring, existing=event.hypervisor),
             partial(self.edit_hypervisor_callback, event.hypervisor),
         )
 
     @on(WelcomeScreenProxmox.DelHypervisor)
-    def on_del_hypervisor(
-        self, event: WelcomeScreenProxmox.DelHypervisor
-    ) -> None:
+    def on_del_hypervisor(self, event: WelcomeScreenProxmox.DelHypervisor) -> None:
         dialog = f"Are you sure?\n\n This will delete hypervisor: {event.hypervisor.url}"
         self.push_screen(
             ConfirmScreen(dialog),
@@ -165,18 +147,14 @@ class ArcaneMage(App):
         )
 
     @on(WelcomeScreenProxmox.ProvisionNode)
-    def on_provision_node(
-        self, event: WelcomeScreenProxmox.ProvisionNode
-    ) -> None:
+    def on_provision_node(self, event: WelcomeScreenProxmox.ProvisionNode) -> None:
         self.push_screen(
             ProvisionNodeScreen(event.fluxnode),
             self.provision_node_callback,
         )
 
     @on(WelcomeScreenProxmox.ProvisionAllNodes)
-    def on_provision_all_nodes(
-        self, event: WelcomeScreenProxmox.ProvisionAllNodes
-    ) -> None:
+    def on_provision_all_nodes(self, event: WelcomeScreenProxmox.ProvisionAllNodes) -> None:
         self.provision_all_nodes(event.delay)
 
     @work(name="provision_all_nodes")
@@ -230,9 +208,7 @@ class ArcaneMage(App):
 
             last = fluxnode == provisionable_nodes.last
 
-            worker = await self.provision_node_callback(
-                fluxnode, delete_efi=last
-            )
+            worker = await self.provision_node_callback(fluxnode, delete_efi=last)
 
             if not worker:
                 break

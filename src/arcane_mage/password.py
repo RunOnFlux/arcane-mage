@@ -9,9 +9,7 @@ class HashedPassword:
     """Yescrypt password hasher for generating and validating Linux shadow-compatible hashes."""
 
     password: str
-    hasher: Yescrypt = field(
-        default_factory=lambda: Yescrypt(n=2**12, r=32, p=1, mode=Mode.MCF)
-    )
+    hasher: Yescrypt = field(default_factory=lambda: Yescrypt(n=2**12, r=32, p=1, mode=Mode.MCF))
     salt: bytes = field(default_factory=lambda: secrets.token_bytes(16))
 
     @property

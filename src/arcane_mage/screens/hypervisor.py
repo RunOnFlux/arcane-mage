@@ -165,9 +165,7 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
             if token:
                 client = ProxmoxApi.from_token(self.url, token)
             else:
-                self.set_message(
-                    msg_type="error", value="Unable to parse token"
-                )
+                self.set_message(msg_type="error", value="Unable to parse token")
 
         elif self.auth_type == "userpass":
             user_pass = ProxmoxApi.parse_user_pass(self.creds)
@@ -175,9 +173,7 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
             if user_pass:
                 client = await ProxmoxApi.from_user_pass(self.url, user_pass)
             else:
-                self.set_message(
-                    msg_type="error", value="Unable to parse user / pass"
-                )
+                self.set_message(msg_type="error", value="Unable to parse user / pass")
 
         if not client:
             self.hypervisor_valid = False
@@ -215,20 +211,14 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
         self.has_message = False
 
-    def set_message(
-        self, msg_type: Literal["error", "info"], value: str
-    ) -> None:
+    def set_message(self, msg_type: Literal["error", "info"], value: str) -> None:
         try:
             label = self.query_one("#info-label", Label)
         except NoMatches:
             return
 
-        label_cls_add = (
-            "--info-error" if msg_type == "error" else "--info-success"
-        )
-        label_cls_remove = (
-            "--info-success" if msg_type == "error" else "--info-error"
-        )
+        label_cls_add = "--info-error" if msg_type == "error" else "--info-success"
+        label_cls_remove = "--info-success" if msg_type == "error" else "--info-error"
 
         label.update(value)
         label.set_class(True, label_cls_add)

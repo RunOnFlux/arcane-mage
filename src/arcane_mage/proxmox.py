@@ -95,9 +95,7 @@ class ProxmoxApi:
         timeout = ClientTimeout(connect=2)
 
         try:
-            async with aiohttp.ClientSession(
-                connector=conn, timeout=timeout
-            ) as client:
+            async with aiohttp.ClientSession(connector=conn, timeout=timeout) as client:
                 res = await client.post(ticket_url, data=payload, ssl=verify_ssl)
         except ClientError:
             return None
@@ -172,9 +170,7 @@ class ProxmoxApi:
         return cls(auth_type="token", client=client, verify_ssl=verify_ssl)
 
     @staticmethod
-    def build_password_client(
-        url: str, ticket: str, csrf_token: str
-    ) -> aiohttp.ClientSession:
+    def build_password_client(url: str, ticket: str, csrf_token: str) -> aiohttp.ClientSession:
         cookies = {"PVEAuthCookie": ticket}
         headers = {"CSRFPreventionToken": csrf_token}
 
@@ -194,12 +190,8 @@ class ProxmoxApi:
         )
 
     @staticmethod
-    def build_token_client(
-        url: str, user: str, token_name: str, token_value: str
-    ) -> aiohttp.ClientSession:
-        headers = {
-            "Authorization": f"PVEAPIToken={user}!{token_name}={token_value}"
-        }
+    def build_token_client(url: str, user: str, token_name: str, token_value: str) -> aiohttp.ClientSession:
+        headers = {"Authorization": f"PVEAPIToken={user}!{token_name}={token_value}"}
         conn = TCPConnector(family=AF_INET)
         timeout = ClientTimeout(connect=2)
 
@@ -319,9 +311,7 @@ class ProxmoxApi:
 
         return res
 
-    async def get_storage_content(
-        self, node: str, location: str
-    ) -> ApiResponse:
+    async def get_storage_content(self, node: str, location: str) -> ApiResponse:
         endpoint = f"nodes/{node}/storage/{location}/content"
 
         res = await self._do_get(endpoint)
@@ -333,9 +323,7 @@ class ProxmoxApi:
 
         return res
 
-    async def set_storage_content(
-        self, storage_id: str, content: str
-    ) -> ApiResponse:
+    async def set_storage_content(self, storage_id: str, content: str) -> ApiResponse:
         endpoint = f"storage/{storage_id}"
         data = {"content": content}
 
@@ -383,9 +371,7 @@ class ProxmoxApi:
 
         return res
 
-    async def wait_for_task(
-        self, task_id: str, node: str, max_wait_s: int = 10
-    ) -> bool:
+    async def wait_for_task(self, task_id: str, node: str, max_wait_s: int = 10) -> bool:
         task_res = await self.get_task(task_id, node)
 
         if not task_res:
@@ -410,9 +396,7 @@ class ProxmoxApi:
 
         return exit_status == "OK"
 
-    async def delete_file(
-        self, file_name: str, node: str, storage: str, content: str
-    ) -> ApiResponse:
+    async def delete_file(self, file_name: str, node: str, storage: str, content: str) -> ApiResponse:
         volume = f"{storage}:{content}/{file_name}"
         endpoint = f"nodes/{node}/storage/{storage}/content/{volume}"
 

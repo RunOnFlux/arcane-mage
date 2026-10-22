@@ -20,6 +20,7 @@ from textual.widgets import (
     Select,
     Switch,
 )
+
 from ..messages import UpdateDefaultPage
 from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from ..provisioner import Provisioner, get_latest_iso_version

@@ -4,8 +4,6 @@ import contextlib
 from pathlib import Path
 from typing import ClassVar, Literal
 from urllib.parse import urlparse
-
-from ..proxmox import ProxmoxApi
 from uuid import uuid4
 
 import keyring
@@ -14,6 +12,8 @@ import yaml
 from pydantic import TypeAdapter
 from pydantic.dataclasses import Field
 from pydantic.dataclasses import dataclass as py_dataclass
+
+from ..proxmox import ProxmoxApi
 
 
 @py_dataclass
@@ -56,10 +56,7 @@ class HypervisorConfig:
             if parsed:
                 user = parsed.username
 
-        if self.name:
-            base = self.name
-        else:
-            base = urlparse(self.url).hostname or self.url
+        base = self.name or urlparse(self.url).hostname or self.url
 
         return f"{base} ({user})" if user else base
 

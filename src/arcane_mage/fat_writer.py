@@ -173,10 +173,7 @@ class FAT12Writer:
         # Write data to clusters
         bytes_written = 0
         for cluster_num in free_clusters:
-            cluster_offset = (
-                (bs.first_data_sector + ((cluster_num - 2) * bs.sectors_per_cluster))
-                * bs.bytes_per_sector
-            )
+            cluster_offset = (bs.first_data_sector + ((cluster_num - 2) * bs.sectors_per_cluster)) * bs.bytes_per_sector
             cluster_size = bs.bytes_per_sector * bs.sectors_per_cluster
             chunk = data[bytes_written : bytes_written + cluster_size]
 
@@ -394,9 +391,7 @@ class FAT12Writer:
         """Get current time in DOS format."""
         now = time.localtime()
 
-        dos_date = (
-            ((now.tm_year - 1980) << 9) | (now.tm_mon << 5) | now.tm_mday
-        )
+        dos_date = ((now.tm_year - 1980) << 9) | (now.tm_mon << 5) | now.tm_mday
         dos_time = (now.tm_hour << 11) | (now.tm_min << 5) | (now.tm_sec // 2)
 
         return dos_date, dos_time

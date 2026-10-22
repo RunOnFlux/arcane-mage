@@ -20,30 +20,32 @@ _BASE_HANDLERS: dict[str, dict[str, str | int]] = {
 
 
 def _apply_config(handlers: dict[str, dict[str, str | int]], handler_names: list[str]) -> None:
-    dictConfig({
-        "version": 1,
-        "disable_existing_loggers": True,
-        "formatters": {
-            "standard": {
-                "format": _LOG_FORMAT,
-                "datefmt": _LOG_DATEFMT,
-                "style": "{",
+    dictConfig(
+        {
+            "version": 1,
+            "disable_existing_loggers": True,
+            "formatters": {
+                "standard": {
+                    "format": _LOG_FORMAT,
+                    "datefmt": _LOG_DATEFMT,
+                    "style": "{",
+                },
             },
-        },
-        "handlers": _BASE_HANDLERS | handlers,
-        "loggers": {
-            "": {
-                "handlers": [],
-                "level": "WARNING",
-                "propagate": False,
+            "handlers": _BASE_HANDLERS | handlers,
+            "loggers": {
+                "": {
+                    "handlers": [],
+                    "level": "WARNING",
+                    "propagate": False,
+                },
+                "arcane_mage": {
+                    "handlers": handler_names,
+                    "level": "INFO",
+                    "propagate": False,
+                },
             },
-            "arcane_mage": {
-                "handlers": handler_names,
-                "level": "INFO",
-                "propagate": False,
-            },
-        },
-    })
+        }
+    )
 
 
 def configure_tui_logging() -> None:

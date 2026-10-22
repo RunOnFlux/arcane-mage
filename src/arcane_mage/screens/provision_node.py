@@ -29,9 +29,7 @@ class PasswordValidator(Validator):
             return self.failure("Password must be a minimum of 12 characters.")
 
         groups = groupby(password)
-        consecutives = [
-            letter for letter, group in groups if len(list(group)) > 3
-        ]
+        consecutives = [letter for letter, group in groups if len(list(group)) > 3]
         if any(consecutives):
             self.previous = password
             return self.failure("Only 3 consecutive repeat characters allowed.")
@@ -53,11 +51,7 @@ class ProvisionNodeScreen(ModalScreen[ArcaneOsConfig | None]):
         self.query_one(Input).focus()
 
     def compose(self) -> ComposeResult:
-        title = (
-            "Provision: All nodes"
-            if self.all
-            else f"Provision: {self.fluxnode.hypervisor.vm_name}"
-        )
+        title = "Provision: All nodes" if self.all else f"Provision: {self.fluxnode.hypervisor.vm_name}"
 
         container = Container()
         container.border_title = title
@@ -117,11 +111,7 @@ The following will occur:
 
         label.visible = display
 
-        msg = (
-            "\n".join(event.validation_result.failure_descriptions)
-            if display
-            else ""
-        )
+        msg = "\n".join(event.validation_result.failure_descriptions) if display else ""
         label.update(msg)
 
         provision_disabled = display or len(event.input.value) < 12
