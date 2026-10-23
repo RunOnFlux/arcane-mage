@@ -17,7 +17,7 @@ uv run ty check
 uv run pytest
 ```
 
-All four must be clean.
+All four must be clean. CI runs them, and `uv build`, on Python 3.13 and 3.14 for every pull request.
 
 ## Pull requests
 
