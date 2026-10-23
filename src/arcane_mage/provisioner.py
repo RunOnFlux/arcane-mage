@@ -236,7 +236,8 @@ class Provisioner:
         return any(x["content"] == "iso" and x["volid"].endswith(iso_name) for x in res.payload)
 
     async def validate_network(self, node: str, network: str) -> bool:
-        """Validate that the specified network bridge exists on the hypervisor."""
+        """Whether `network` is a bridge a VM on `node` can attach to: a Linux or
+        OVS bridge, or an SDN VNet applied on that node."""
         res = await self.api.get_networks(node)
 
         if not res:
