@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.0
+
+### Added
+
+- **Console copy devices**: every VM is created with `vga: std,clipboard=vnc` and `serial0: socket`. The node's console offers its configure link to the viewer's clipboard (the noVNC clipboard panel) and writes it to the serial port (the xterm.js console). VNC clipboard needs PVE 8.2, below the 8.4.1 minimum.
+
 ## 3.0.0
 
 ### Breaking Changes
