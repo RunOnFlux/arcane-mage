@@ -58,6 +58,8 @@ class VmConfig:
     ide2: str
     net0: str
     scsihw: str
+    vga: str
+    serial0: str
     startup: str | None = None
 
     def to_proxmox_dict(self) -> dict:
@@ -528,6 +530,11 @@ class Provisioner:
             ide2=f"{storage_iso}:iso/{iso_name},media=cdrom",
             net0=f"model=virtio,bridge={network_bridge}{network_rate}",
             scsihw="virtio-scsi-single",
+            # The node's console offers text to the viewer's clipboard (Proxmox's
+            # "Clipboard: VNC", PVE 8.2+, below MIN_API_VERSION) and writes it to its
+            # first serial port (the xterm.js console).
+            vga="std,clipboard=vnc",
+            serial0="socket",
             startup=startup_config,
         )
 

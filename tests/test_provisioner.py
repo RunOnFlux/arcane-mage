@@ -154,6 +154,22 @@ class TestProvisionerValidation:
         assert config.memory == 8192
         assert config.cores == 4
 
+    async def test_a_vm_has_the_clipboard_channel_and_a_serial_port(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=100)
+
+        config = await provisioner.create_vm_config(
+            vm_name="test-vm",
+            tier="cumulus",
+            network_bridge="vmbr0",
+        )
+
+        assert config is not None
+        api = config.to_proxmox_dict()
+        assert api["vga"] == "std,clipboard=vnc"
+        assert api["serial0"] == "socket"
+
     async def test_create_vm_config_invalid_tier(self, provisioner: Provisioner, mock_api: AsyncMock):
         config = await provisioner.create_vm_config(
             vm_name="test-vm",
