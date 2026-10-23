@@ -31,7 +31,7 @@ options:
     required: true
     type: str
   network:
-    description: Network bridge to validate.
+    description: Network bridge to validate. A Linux or OVS bridge, or an SDN VNet applied on the node.
     required: true
     type: str
   iso_name:
