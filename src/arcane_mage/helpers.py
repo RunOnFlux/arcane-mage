@@ -82,10 +82,7 @@ async def exec_binary(
     if len(cmd) == 0:
         raise ChildProcessError("Cannot execute empty cmd")
 
-    extra_params = {}
-
-    if cwd is not None:
-        extra_params["cwd"] = cwd
+    preexec_fn: Callable[[], None] | None = None
 
     if user is not None:
         try:
@@ -93,17 +90,16 @@ async def exec_binary(
         except KeyError as e:
             raise ChildProcessError("User not found") from e
 
-        extra_params["preexec_fn"] = demote(pw_record.pw_uid, pw_record.pw_gid)
-
-    if env:
-        extra_params["env"] = env
+        preexec_fn = demote(pw_record.pw_uid, pw_record.pw_gid)
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            **extra_params,
+            cwd=cwd,
+            preexec_fn=preexec_fn,
+            env=env or None,
         )
     except FileNotFoundError as e:
         raise ChildProcessError(f"Binary not found: {cmd[0]}, is it installed?") from e
@@ -169,7 +165,6 @@ async def do_http(
                     json=data,
                     ssl=verify_ssl,
                 ) as resp:
-                    resp: ClientResponse  # type: ignore
                     if resp.status in [429, 500, 502, 503, 504]:
                         log.debug("bad response: %s", resp.status)
                         if remaining or not max_tries:

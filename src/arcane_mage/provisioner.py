@@ -14,7 +14,7 @@ import yaml
 from .fat_writer import FAT12Writer
 from .helpers import do_http
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
-from .proxmox import ProxmoxApi
+from .proxmox import ApiResponse, HypervisorNode, ProxmoxApi, VmSummary
 
 log = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class HypervisorDiscovery:
     """Result of discovering nodes and their provisioned VMs on a hypervisor."""
 
     nodes: ArcaneOsConfigGroup
-    provisioned_vms: dict[str, list[dict]]
+    provisioned_vms: dict[str, list[VmSummary]]
 
 
 class Provisioner:
@@ -150,11 +150,14 @@ class Provisioner:
             return None
 
         useable_nodes = ArcaneOsConfigGroup()
-        provisioned: dict[str, list[dict]] = {}
+        provisioned: dict[str, list[VmSummary]] = {}
 
-        async def handle_node(node: dict) -> None:
-            if name := node.get("node"):
-                vm_res = await self.api.get_vms(name)
+        # A node whose VMs cannot be listed is left out: its configs cannot be
+        # checked against what it already runs.
+        async def handle_node(node: HypervisorNode) -> None:
+            name = node["node"]
+            vm_res = await self.api.get_vms(name)
+            if vm_res:
                 provisioned[name] = vm_res.payload
                 useable_nodes.add_nodes(all_configs.get_nodes_by_hypervisor_name(name))
 
@@ -169,10 +172,7 @@ class Provisioner:
         if not res:
             return False, "Unable to get Proxmox api version"
 
-        version = res.payload.get("version")
-
-        if not version:
-            return False, "Api payload missing version info"
+        version = res.payload["version"]
 
         if not is_api_min_version(version):
             return False, f"Api version too old. Got: {version}, Want: {MIN_API_VERSION}"
@@ -195,18 +195,19 @@ class Provisioner:
         if not res.payload:
             return False, "No Storage state available, did you forget API permissions?"
 
-        node_storage_iso = next(filter(lambda x: x.get("storage") == storage_iso, res.payload), None)
-        node_storage_images = next(filter(lambda x: x.get("storage") == storage_images, res.payload), None)
-        node_storage_import = next(filter(lambda x: x.get("storage") == storage_import, res.payload), None)
+        by_name = {x["storage"]: x for x in res.payload}
+        node_storage_iso = by_name.get(storage_iso)
+        node_storage_images = by_name.get(storage_images)
+        node_storage_import = by_name.get(storage_import)
 
-        if not all([node_storage_iso, node_storage_images, node_storage_import]):
+        if not node_storage_iso or not node_storage_images or not node_storage_import:
             return False, "Missing storage config item"
 
-        iso_content = node_storage_iso.get("content")
-        images_content = node_storage_images.get("content")
-        import_content = node_storage_import.get("content")
-
-        if "iso" not in iso_content or "images" not in images_content or "import" not in import_content:
+        if (
+            "iso" not in node_storage_iso["content"]
+            or "images" not in node_storage_images["content"]
+            or "import" not in node_storage_import["content"]
+        ):
             return False, "Storage type missing on hypervisor"
 
         import_available = node_storage_import.get("avail", 0)
@@ -230,15 +231,7 @@ class Provisioner:
         if not res:
             return False
 
-        iso_exists = next(
-            filter(
-                lambda x: x.get("content") == "iso" and x.get("volid", "").endswith(iso_name),
-                res.payload,
-            ),
-            None,
-        )
-
-        return bool(iso_exists)
+        return any(x["content"] == "iso" and x["volid"].endswith(iso_name) for x in res.payload)
 
     async def validate_network(self, node: str, network: str) -> bool:
         """Validate that the specified network bridge exists on the hypervisor."""
@@ -247,9 +240,7 @@ class Provisioner:
         if not res:
             return False
 
-        network_exists = next(filter(lambda x: x.get("iface") == network, res.payload), None)
-
-        return bool(network_exists)
+        return any(x["iface"] == network for x in res.payload)
 
     async def stop_vm(self, vm_id: int, node: str) -> bool:
         """Stop a VM and wait for the task to complete."""
@@ -347,7 +338,7 @@ class Provisioner:
         return await self._stop_and_delete_vm(
             vm["vmid"],
             hyper.vm_name,
-            vm.get("status", "unknown"),
+            vm["status"],
             hyper.node,
             callback,
         )
@@ -370,9 +361,9 @@ class Provisioner:
                 callback(False, f"Unable to list VMs on {node}")
             return False
 
-        vm: dict | None = None
+        vm: VmSummary | None = None
         if vm_id is not None:
-            vm = next((v for v in vms_res.payload if v.get("vmid") == vm_id), None)
+            vm = next((v for v in vms_res.payload if v["vmid"] == vm_id), None)
             if not vm:
                 if callback:
                     callback(False, f"VM id={vm_id} not found on {node}")
@@ -390,7 +381,7 @@ class Provisioner:
         return await self._stop_and_delete_vm(
             vm["vmid"],
             vm.get("name", str(vm["vmid"])),
-            vm.get("status", "unknown"),
+            vm["status"],
             node,
             callback,
         )
@@ -419,22 +410,17 @@ class Provisioner:
         efi_file = "arcane_efi.raw"
         config_file = f"{vm_id}_arcane_config.raw"
 
+        efi_res: ApiResponse[str] | None = None
+
         if delete_efi:
             efi_res = await self.api.delete_file(efi_file, node, storage, content="import")
-        else:
-            efi_res = True
 
         config_res = await self.api.delete_file(config_file, node, storage, content="import")
 
-        if not efi_res or not config_res:
+        if efi_res is not None and (not efi_res or not await self.api.wait_for_task(efi_res.payload, node)):
             return False
 
-        if delete_efi:
-            efi_ok = await self.api.wait_for_task(efi_res.payload, node)
-        else:
-            efi_ok = True
-
-        if not efi_ok:
+        if not config_res:
             return False
 
         return await self.api.wait_for_task(config_res.payload, node)
@@ -510,8 +496,6 @@ class Provisioner:
                 return None
 
             vm_id = vm_id_res.payload
-
-            assert vm_id
 
         disk_rate = f"mbps_rd={disk_limit},mbps_wr={disk_limit}," if disk_limit else ""
         network_rate = f",rate={network_limit}" if network_limit else ""

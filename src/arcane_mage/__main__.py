@@ -14,6 +14,7 @@ import os
 import sys
 from importlib.metadata import version as get_version
 from pathlib import Path
+from typing import TypedDict
 from urllib.parse import urlparse
 
 from rich.console import Console
@@ -21,7 +22,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from .models import ArcaneCreatorConfig, ArcaneOsConfigGroup
-from .proxmox import ProxmoxApi, ResolvedConnection
+from .proxmox import ProxmoxApi, ResolvedConnection, VmSummary
 
 app = typer.Typer(
     name="arcane-mage",
@@ -96,8 +97,8 @@ async def _backfill_hypervisor_names(creator_config: ArcaneCreatorConfig) -> Non
 
             async with api:
                 res = await api.get_hypervisor_nodes()
-                if res and isinstance(res.payload, list):
-                    names = [n.get("node", "") for n in res.payload if n.get("node")]
+                if res:
+                    names = [n["node"] for n in res.payload]
                     if names:
                         hyper.name = names[0] if len(names) == 1 else ",".join(sorted(names))
                         dirty = True
@@ -169,6 +170,12 @@ def _resolve_connection(
         raise CliError("Invalid token format. Expected: user@pam!tokenname=tokenvalue")
 
     return ResolvedConnection(resolved_url, parsed)
+
+
+class _Check(TypedDict):
+    check: str
+    ok: bool
+    message: str
 
 
 def _load_configs(config: str) -> ArcaneOsConfigGroup:
@@ -310,9 +317,6 @@ def deprovision(
         if use_json and not force:
             raise CliError("--json requires --force for destructive operations")
 
-        if not direct_vm and not config:
-            config = "fluxnodes.yaml"
-
         if direct_vm and config:
             raise CliError("Cannot specify --config with --vm-name or --vm-id")
 
@@ -330,21 +334,21 @@ def deprovision(
                 provisioner = Provisioner(api)
 
                 res = await api.get_hypervisor_nodes()
-                if not res or not isinstance(res.payload, list):
+                if not res:
                     raise CliError("Unable to discover hypervisor nodes")
 
-                hv_nodes = [n.get("node") for n in res.payload if n.get("node")]
+                hv_nodes = [n["node"] for n in res.payload]
                 if node_filter:
                     hv_nodes = [n for n in hv_nodes if n == node_filter]
 
-                found_vm: dict | None = None
+                found_vm: VmSummary | None = None
                 found_node: str | None = None
                 for hv_node in hv_nodes:
                     vms_res = await api.get_vms(hv_node)
                     if not vms_res:
                         continue
                     for v in vms_res.payload:
-                        if vm_id is not None and v.get("vmid") == vm_id:
+                        if vm_id is not None and v["vmid"] == vm_id:
                             found_vm = v
                             found_node = hv_node
                             break
@@ -411,7 +415,7 @@ def deprovision(
         return
 
     try:
-        configs = _load_configs(config)
+        configs = _load_configs(config or "fluxnodes.yaml")
     except CliError as e:
         _handle_error(e, use_json)
 
@@ -534,7 +538,7 @@ def validate(
                     all_ok = False
                     continue
 
-                checks = []
+                checks: list[_Check] = []
 
                 api_ok, api_msg = await provisioner.validate_api_version(hyper.node)
                 checks.append(
@@ -630,17 +634,17 @@ def ping(
             res = await api.get_hypervisor_nodes()
 
             if not res:
-                if res and res.unauthorized:
+                if res.unauthorized:
                     raise CliError("Authentication failed")
                 raise CliError(f"Unable to connect to {conn.url}")
 
-            nodes = [n.get("node", "unknown") for n in res.payload] if isinstance(res.payload, list) else []
+            nodes = [n["node"] for n in res.payload]
 
             version = None
             if nodes:
                 ver_res = await api.get_api_version(nodes[0])
-                if ver_res and ver_res.payload:
-                    version = ver_res.payload.get("version")
+                if ver_res:
+                    version = ver_res.payload["version"]
 
             data = {
                 "url": conn.url,

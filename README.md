@@ -89,9 +89,18 @@ if creds:
 
 # Use as an async context manager
 async with api:
-    version = await api.get_api_version("pve1")
-    vms = await api.get_vms("pve1")
+    res = await api.get_vms("pve1")
+
+    # A failed call is an ApiFailure (status, error, timed_out); past this check
+    # it is an ApiSuccess whose payload has the endpoint's type, here list[VmSummary].
+    if not res:
+        print(f"Unable to list VMs: {res.error}")
+    else:
+        for vm in res.payload:
+            print(vm["vmid"], vm.get("name"), vm["status"])
 ```
+
+Every call validates Proxmox's answer against the endpoint's shape. An answer missing a field arcane-mage relies on comes back as an `ApiFailure` saying which field; fields arcane-mage does not name are kept as Proxmox sent them.
 
 #### Provisioning Nodes
 

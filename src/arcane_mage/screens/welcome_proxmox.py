@@ -24,6 +24,7 @@ from textual.widgets import (
 from ..messages import UpdateDefaultPage
 from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from ..provisioner import Provisioner, get_latest_iso_version
+from ..proxmox import VmSummary
 
 
 class WelcomeScreenProxmox(Screen):
@@ -99,7 +100,7 @@ class WelcomeScreenProxmox(Screen):
     @work(name="populate_hypervisor")
     async def populate_hypervisor_api(self, hypervisor: HypervisorConfig) -> None:
         empty = ArcaneOsConfigGroup()
-        empty_provisioned: dict[str, list[dict]] = {}
+        empty_provisioned: dict[str, list[VmSummary]] = {}
 
         provisioner = await Provisioner.from_hypervisor_config(hypervisor)
 
@@ -122,40 +123,37 @@ class WelcomeScreenProxmox(Screen):
         self.build_fluxnode_table(discovery.nodes, discovery.provisioned_vms)
         self.hypervisor_populated = True
 
-    def build_fluxnode_table(self, fluxnodes: ArcaneOsConfigGroup, provisioned_nodes: dict[str, list[dict]]) -> None:
+    def build_fluxnode_table(
+        self, fluxnodes: ArcaneOsConfigGroup, provisioned_nodes: dict[str, list[VmSummary]]
+    ) -> None:
         try:
             table = self.query_one(DataTable)
         except NoMatches:
             return
 
         columns = [
-            {"label": "Node", "key": "node"},
-            {"label": "Hostname", "key": "hostname"},
-            {"label": "Tier", "key": "tier"},
-            {"label": "Network", "key": "network"},
-            {"label": "Address", "key": "address"},
-            {"label": "Provisioned", "key": "provisioned"},
+            ("Node", "node"),
+            ("Hostname", "hostname"),
+            ("Tier", "tier"),
+            ("Network", "network"),
+            ("Address", "address"),
+            ("Provisioned", "provisioned"),
         ]
 
         table.clear(columns=True)
-        for column in columns:
-            table.add_column(**column)
+        for label, key in columns:
+            table.add_column(label, key=key)
 
         for fluxnode in fluxnodes:
             hyper = fluxnode.hypervisor
+            if not hyper:
+                continue
+
             row_key = f"{hyper.node}:{hyper.vm_name}"
 
             hypervisor_nodes = provisioned_nodes.get(hyper.node, [])
 
-            is_provisioned = bool(
-                next(
-                    filter(
-                        lambda x: x.get("name") == hyper.vm_name,
-                        hypervisor_nodes,
-                    ),
-                    None,
-                )
-            )
+            is_provisioned = any(x.get("name") == hyper.vm_name for x in hypervisor_nodes)
             table.add_row(*fluxnode.as_row(), is_provisioned, key=row_key)
 
     def compose(self) -> ComposeResult:
@@ -211,17 +209,17 @@ class WelcomeScreenProxmox(Screen):
         if event.button.id == "add-hypervisor":
             self.post_message(WelcomeScreenProxmox.AddHypervisor())
         elif event.button.id == "edit-hypervisor":
-            select = self.query_one(Select)
-            if select.value == Select.BLANK:
+            url = self.query_one(Select).value
+            if not isinstance(url, str):
                 return
-            if hyper := self.get_hypervisor_by_url(select.value):
+            if hyper := self.get_hypervisor_by_url(url):
                 self.post_message(WelcomeScreenProxmox.EditHypervisor(hyper))
         elif event.button.id == "del-hypervisor":
-            select = self.query_one(Select)
-            if select.value == Select.BLANK:
+            url = self.query_one(Select).value
+            if not isinstance(url, str):
                 return
 
-            if hyper := self.get_hypervisor_by_url(select.value):
+            if hyper := self.get_hypervisor_by_url(url):
                 self.post_message(WelcomeScreenProxmox.DelHypervisor(hyper))
 
         elif event.button.id == "back":
@@ -251,7 +249,7 @@ class WelcomeScreenProxmox(Screen):
             row = dt.get_row(row_key)
 
             if not row[-1]:  # not provisioned
-                fluxnode = self.fluxnodes.get_node_by_vm_name(*row_key.value.split(":"))
+                fluxnode = self._fluxnode_for_row(row_key.value)
 
                 if fluxnode:
                     nodes.append(fluxnode)
@@ -268,18 +266,27 @@ class WelcomeScreenProxmox(Screen):
             self.notify(f"Fluxnode: {name} already provisioned")
             return
 
-        fluxnode = self.fluxnodes.get_node_by_vm_name(*event.row_key.value.split(":"))
+        fluxnode = self._fluxnode_for_row(event.row_key.value)
 
         if not fluxnode:
             return
 
         self.post_message(WelcomeScreenProxmox.ProvisionNode(fluxnode))
 
+    def _fluxnode_for_row(self, row_key: str | None) -> ArcaneOsConfig | None:
+        """The config behind a table row, keyed `<hypervisor node>:<vm name>`."""
+        if not row_key:
+            return None
+
+        node, _, vm_name = row_key.partition(":")
+
+        return self.fluxnodes.get_node_by_vm_name(node, vm_name)
+
     def get_hypervisor_by_url(self, url: str) -> HypervisorConfig | None:
         return next(filter(lambda x: x.url == url, self.hypervisors), None)
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if (hyper_url := event.select.value) == Select.BLANK:
+        if not isinstance(hyper_url := event.select.value, str):
             return
 
         if hypervisor := self.get_hypervisor_by_url(hyper_url):

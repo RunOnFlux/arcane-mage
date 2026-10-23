@@ -20,12 +20,30 @@ from .models import (
 )
 from .password import HashedPassword
 from .provisioner import TIER_CONFIG, HypervisorDiscovery, Provisioner, get_latest_iso_version
-from .proxmox import ApiResponse, ParsedToken, ParsedUserPass, ProxmoxApi, ResolvedConnection
+from .proxmox import (
+    ApiFailure,
+    ApiResponse,
+    ApiSuccess,
+    HypervisorNode,
+    NetworkIface,
+    NodeStorage,
+    NodeVersion,
+    ParsedToken,
+    ParsedUserPass,
+    ProxmoxApi,
+    ResolvedConnection,
+    StorageConfig,
+    StorageVolume,
+    TaskStatus,
+    VmSummary,
+)
 
 __all__ = [
     "TIER_CONFIG",
     "AddressConfig",
+    "ApiFailure",
     "ApiResponse",
+    "ApiSuccess",
     "ArcaneCreatorConfig",
     "ArcaneOsConfig",
     "ArcaneOsConfigGroup",
@@ -36,17 +54,25 @@ __all__ = [
     "Hypervisor",
     "HypervisorConfig",
     "HypervisorDiscovery",
+    "HypervisorNode",
     "Identifier",
     "Identity",
     "InstallerConfig",
     "MetricsAppConfig",
     "NetworkConfig",
+    "NetworkIface",
+    "NodeStorage",
+    "NodeVersion",
     "Notifications",
     "ParsedToken",
     "ParsedUserPass",
     "Provisioner",
     "ProxmoxApi",
     "ResolvedConnection",
+    "StorageConfig",
+    "StorageVolume",
     "SystemConfig",
+    "TaskStatus",
+    "VmSummary",
     "get_latest_iso_version",
 ]

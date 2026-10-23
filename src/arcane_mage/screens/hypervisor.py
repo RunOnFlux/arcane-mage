@@ -182,21 +182,23 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
         async with client.session():
             res = await client.get_hypervisor_nodes()
 
-        if res.unauthorized:
-            self.set_message(msg_type="error", value="Unauthorized")
+        if not res:
+            if res.unauthorized:
+                message = "Unauthorized"
+            elif res.timed_out:
+                message = "Timed out"
+            else:
+                message = res.error or "Unable to connect"
+            self.set_message(msg_type="error", value=message)
             self.hypervisor_valid = False
-        elif res.error:
-            self.set_message(msg_type="error", value=res.error)
-            self.hypervisor_valid = False
-        else:
-            # Extract node name from API response
-            if isinstance(res.payload, list):
-                names = [n.get("node", "") for n in res.payload if n.get("node")]
-                if names:
-                    self._resolved_name = names[0] if len(names) == 1 else ",".join(sorted(names))
+            return
 
-            self.set_message(msg_type="info", value="Validated")
-            self.hypervisor_valid = True
+        names = [n["node"] for n in res.payload]
+        if names:
+            self._resolved_name = names[0] if len(names) == 1 else ",".join(sorted(names))
+
+        self.set_message(msg_type="info", value="Validated")
+        self.hypervisor_valid = True
 
     def clear_message(self) -> None:
         try:
@@ -232,10 +234,15 @@ class AddHypervisorScreen(ModalScreen[HypervisorConfig | None]):
 
         select = event.select
 
-        if select.id != "auth-type" or select.value == self.auth_type:
+        value = select.value
+
+        if select.id != "auth-type" or value == self.auth_type:
             return
 
-        self.auth_type = select.value
+        if value == "token":
+            self.auth_type = "token"
+        elif value == "userpass":
+            self.auth_type = "userpass"
 
     def watch_auth_type(self, new: Literal["token", "userpass"]) -> None:
         labels = {"token": "API Token:", "userpass": "User / Pass:"}

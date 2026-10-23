@@ -197,7 +197,7 @@ class NetworkConfig:
     def from_dict(cls, data: dict) -> NetworkConfig:
         ip_allocation: str = data.get("ip_allocation", "")
         vlan: int | None = data.get("vlan")
-        rate_limit: int | None = data.get("rate_limit")
+        rate_limit: Literal[35, 75, 135, 250] | None = data.get("rate_limit")
 
         if ip_allocation not in ("dhcp", "static"):
             raise ValueError(f"Invalid ip allocation: {ip_allocation}")

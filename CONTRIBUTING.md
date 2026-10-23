@@ -13,10 +13,11 @@ This installs the library, the CLI and TUI extras, and the dev tools.
 ```bash
 uv run ruff check
 uv run ruff format
+uv run ty check
 uv run pytest
 ```
 
-All three must be clean.
+All four must be clean.
 
 ## Pull requests
 

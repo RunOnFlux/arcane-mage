@@ -19,22 +19,22 @@ class PasswordValidator(Validator):
 
         self.previous: str | None = None
 
-    def validate(self, password: str) -> ValidationResult:
-        if self.previous is not None and len(password) < len(self.previous):
-            self.previous = password
+    def validate(self, value: str) -> ValidationResult:
+        if self.previous is not None and len(value) < len(self.previous):
+            self.previous = value
             return self.success()
 
-        if len(password) < 12:
-            self.previous = password
+        if len(value) < 12:
+            self.previous = value
             return self.failure("Password must be a minimum of 12 characters.")
 
-        groups = groupby(password)
+        groups = groupby(value)
         consecutives = [letter for letter, group in groups if len(list(group)) > 3]
         if any(consecutives):
-            self.previous = password
+            self.previous = value
             return self.failure("Only 3 consecutive repeat characters allowed.")
 
-        self.previous = password
+        self.previous = value
         return self.success()
 
 
@@ -51,7 +51,9 @@ class ProvisionNodeScreen(ModalScreen[ArcaneOsConfig | None]):
         self.query_one(Input).focus()
 
     def compose(self) -> ComposeResult:
-        title = "Provision: All nodes" if self.all else f"Provision: {self.fluxnode.hypervisor.vm_name}"
+        hyper = self.fluxnode.hypervisor
+        name = hyper.vm_name if hyper else self.fluxnode.system.hostname
+        title = "Provision: All nodes" if self.all else f"Provision: {name}"
 
         container = Container()
         container.border_title = title
@@ -105,13 +107,14 @@ The following will occur:
             self.dismiss(None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        display = bool(event.validation_result.failures)
+        result = event.validation_result
+        display = bool(result and result.failures)
 
         label = self.query_one("#error-label", Label)
 
         label.visible = display
 
-        msg = "\n".join(event.validation_result.failure_descriptions) if display else ""
+        msg = "\n".join(result.failure_descriptions) if result and display else ""
         label.update(msg)
 
         provision_disabled = display or len(event.input.value) < 12
