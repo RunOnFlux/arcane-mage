@@ -105,9 +105,34 @@ Fluxnode identity, network, notifications, and delegate configuration.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `upnp_port` | integer | no | | UPnP port for automatic port forwarding |
+| `upnp_port` | integer | no | | UPnP port for automatic port forwarding. Setting it enables UPnP |
 | `router_address` | string | no | | Router IP for UPnP |
-| `private_chain_sources` | list[string] | no | `[]` | Private IP:port pairs for local chain sync (must be RFC1918 addresses) |
+| `private_chain_sources` | list[string] | no | `[]` | `ip:port` pairs the node streams the chain from |
+| `params_source` | string | no | | `ip:port` the node fetches fluxd's zk params from. Unset, it downloads them from Flux |
+
+A chain source or params source is kept only at a unicast address on a LAN, or, for a node installing onto labnet, also at a global address on labnet's internet. Loopback, link-local, multicast, unspecified, reserved and broadcast addresses are dropped, as is anything not in `ip:port` form.
+
+#### fluxnode.chain (optional)
+
+The network the node installs onto, fixed at install. Omit it for mainnet.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `network` | string | no | `mainnet` | `mainnet` or `labnet` |
+| `key` | string | for labnet | | The lab's compressed public key (66 hex characters, `02`/`03` prefix). Not allowed for mainnet |
+
+The installer checks that the identity key belongs to the chain's network.
+
+#### fluxnode.gravity (optional)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `debug` | boolean | `false` | Run Gravity with debug logging |
+| `development` | boolean | `false` | Run Gravity in development mode |
+
+#### fluxnode.dev_token (optional)
+
+A one-line dev-channel enrolment token, bound to `fluxnode.identity`. It is written to the installer config unchanged, and the installer verifies it against the identity.
 
 #### fluxnode.notifications (optional)
 

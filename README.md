@@ -79,8 +79,8 @@ from arcane_mage import ProxmoxApi
 token = ProxmoxApi.parse_token("automation@pam!arcane=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
 if token:
     api = ProxmoxApi.from_token("https://pve.local:8006", token)
-    print(token.user)      # "automation@pam"
-    print(token.username)   # "automation"
+    print(token.user)  # "automation@pam"
+    print(token.username)  # "automation"
 
 # Password authentication
 creds = ProxmoxApi.parse_user_pass("automation:secret")
@@ -253,3 +253,11 @@ See [docs/proxmox-setup.md](docs/proxmox-setup.md) for hypervisor setup instruct
 ### Credential Storage
 
 Arcane Mage uses your system's secure keyring to store API credentials, with a built-in TPM 2.0 backend for headless Linux servers. See [docs/keyring.md](docs/keyring.md) for details and troubleshooting.
+
+### Ansible
+
+The `runonflux.arcane_mage` collection wraps validation, provisioning, status, deprovisioning and ISO lookup as Ansible modules. See [ansible_collection/runonflux/arcane_mage/README.md](ansible_collection/runonflux/arcane_mage/README.md).
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks a pull request must pass, and how we write comments and commit messages.

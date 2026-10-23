@@ -35,20 +35,17 @@ arcane-mage = "arcane_mage.__main__:app"
 arcane-mage-tpm = "arcane_mage.tpm_keyring"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/arcane_mage"]
+requires = ["uv_build>=0.13.3,<0.14"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
     "aioresponses>=0.7.8",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
-    "ruff>=0.15.4",
+    "ruff>=0.17.2",
     "textual-dev>=1.8.0",
-    "ty>=0.0.27",
+    "ty>=0.0.91",
     "types-aiofiles>=25.1.0.20251011",
     "types-pyyaml>=6.0.12.20250915",
 ]
@@ -59,6 +56,10 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# An Ansible module carries DOCUMENTATION, EXAMPLES and RETURN before its imports.
+"ansible_collection/**/plugins/modules/*.py" = ["E402"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

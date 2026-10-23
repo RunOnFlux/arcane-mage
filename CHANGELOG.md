@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Build backend**: the package builds with `uv_build`. The wheel's contents are unchanged.
+
+## 2.3.0
+
+### Added
+
+- **`fluxnode.network.params_source`**: an `ip:port` the node fetches fluxd's zk params from. Kept under the same address rule as chain sources; unset, the node downloads them from Flux.
+
+## 2.2.1
+
+### Fixed
+
+- **Chain sources**: a source is kept only at a unicast address a node can stream from: a LAN address or, for a labnet install, a global address on labnet's internet. Loopback, link-local, multicast, unspecified, reserved and broadcast addresses are dropped.
+
+## 2.2.0
+
+### Added
+
+- **`fluxnode.chain`**: the network a node installs onto. Absent, mainnet; for a lab, `network: labnet` with the lab's compressed public key as `key`.
+
+### Changed
+
+- **UPnP**: the installer config carries `upnp_port` alone. Setting the port enables UPnP.
+
+### Removed
+
+- **`fluxnode.gravity.testnet`**: a config that still sets it loads, and the key is ignored.
+
 ## 2.1.0
 
 ### Added

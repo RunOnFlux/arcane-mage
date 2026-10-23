@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2025, RunOnFlux
 # License: MIT
@@ -135,9 +134,7 @@ async def run_validate(params):
             errors.append(f"Storage: {storage_msg}")
 
         # ISO
-        iso_ok = await provisioner.validate_iso_version(
-            params["node"], params["iso_name"], params["storage_iso"]
-        )
+        iso_ok = await provisioner.validate_iso_version(params["node"], params["iso_name"], params["storage_iso"])
         checks["iso"] = iso_ok
         if not iso_ok:
             errors.append(f"ISO '{params['iso_name']}' not found on storage '{params['storage_iso']}'")
