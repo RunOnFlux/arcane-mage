@@ -1,5 +1,49 @@
 # Changelog
 
+## 3.0.0
+
+### Breaking Changes
+
+- **`ApiResponse`** is the union `ApiSuccess[T] | ApiFailure`. `ApiSuccess` always carries its `payload`, typed per endpoint (for example `ApiResponse[list[VmSummary]]` from `get_vms`); `ApiFailure` carries `status`, `error` and `timed_out`. `if not res:` narrows to `ApiFailure`. Code that constructs `ApiResponse(...)` constructs `ApiSuccess(payload=...)` or `ApiFailure(...)` instead.
+- **Response validation**: each endpoint's answer is validated against its shape (`VmSummary`, `NetworkIface`, `NodeStorage`, `StorageVolume`, `NodeVersion`, `TaskStatus`, `HypervisorNode`, `StorageConfig`, all exported). An answer missing a required field, or with `data: null` where a value is due, is an `ApiFailure` naming the field. Fields the shapes do not name are kept.
+
+### Changed
+
+- **Build backend**: the package builds with `uv_build`. The wheel's contents are unchanged.
+- **Discovery**: a hypervisor node whose VMs cannot be listed is left out of `discover_nodes`, rather than treated as running none.
+- **`download_iso`** sends `verify-certificates` as `0`/`1`. The Ansible `iso_info` module downloads through it.
+
+### Fixed
+
+- **TUI**: adding a hypervisor whose connection times out reports the timeout instead of validating it.
+- **CLI**: `arcane-mage ping` reports "Authentication failed" for a rejected token.
+
+## 2.3.0
+
+### Added
+
+- **`fluxnode.network.params_source`**: an `ip:port` the node fetches fluxd's zk params from. Kept under the same address rule as chain sources; unset, the node downloads them from Flux.
+
+## 2.2.1
+
+### Fixed
+
+- **Chain sources**: a source is kept only at a unicast address a node can stream from: a LAN address or, for a labnet install, a global address on labnet's internet. Loopback, link-local, multicast, unspecified, reserved and broadcast addresses are dropped.
+
+## 2.2.0
+
+### Added
+
+- **`fluxnode.chain`**: the network a node installs onto. Absent, mainnet; for a lab, `network: labnet` with the lab's compressed public key as `key`.
+
+### Changed
+
+- **UPnP**: the installer config carries `upnp_port` alone. Setting the port enables UPnP.
+
+### Removed
+
+- **`fluxnode.gravity.testnet`**: a config that still sets it loads, and the key is ignored.
+
 ## 2.1.0
 
 ### Added

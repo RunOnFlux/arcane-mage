@@ -25,7 +25,7 @@ class TestInstallerConfig:
 
     def test_from_dict_ignores_unknown_keys(self):
         data = {"auto_reboot": True, "unknown_key": "value"}
-        config = InstallerConfig(**data)
+        config = InstallerConfig(**data)  # ty: ignore[invalid-argument-type]
 
         assert config.auto_reboot is True
 

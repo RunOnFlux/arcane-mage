@@ -19,7 +19,7 @@ class TestGravityConfig:
         assert config.development is True
 
     def test_has_no_network_switch(self):
-        assert "testnet" not in GravityConfig(**{"testnet": True}).to_dict()
+        assert "testnet" not in GravityConfig(**{"testnet": True}).to_dict()  # ty: ignore[unknown-argument]
 
     def test_to_dict_excludes_false(self):
         config = GravityConfig()

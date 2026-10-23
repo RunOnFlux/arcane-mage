@@ -46,7 +46,7 @@ nodes:
         upnp_port: 16167 # required if UPnP
         router_address: 192.168.1.1 # required if UPnP
         private_chain_sources: # optional - this is handy if you don't have UPnP but
-        # have a local chain. MUST be private addresses or they will be skipped
+        # have a local chain. MUST be LAN addresses or they will be skipped
         - 192.168.1.20:16197
         - 192.168.1.21:16187
       identity: # required

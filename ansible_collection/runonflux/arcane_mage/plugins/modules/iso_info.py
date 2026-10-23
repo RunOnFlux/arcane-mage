@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 
 # Copyright: (c) 2025, RunOnFlux
 # License: MIT
@@ -118,19 +117,14 @@ async def run_iso_info(params):
             if existing:
                 return True, iso_name, False, ""
 
-        # Download via Proxmox API (direct POST without verify-certificates param)
         # URL format: https://images.runonflux.io/arcane/releases/<build>/FluxLive-<build>.iso
         build_id = iso_name.replace("FluxLive-", "").replace(".iso", "")
         download_url = f"https://images.runonflux.io/arcane/releases/{build_id}/{iso_name}"
 
-        endpoint = f"nodes/{params['node']}/storage/{params['storage_iso']}/download-url"
-        data = {"content": "iso", "filename": iso_name, "url": download_url}
-
-        res = await api._do_post(endpoint, data=data)
+        res = await api.download_iso(params["node"], download_url, iso_name, params["storage_iso"])
 
         if not res:
-            error_detail = f"status={res.status} error={res.error}" if res else "no response"
-            return False, iso_name, False, f"Failed to initiate ISO download: {error_detail}"
+            return False, iso_name, False, f"Failed to initiate ISO download: status={res.status} error={res.error}"
 
         # Wait for download task
         ok = await api.wait_for_task(res.payload, params["node"], max_wait_s=600)

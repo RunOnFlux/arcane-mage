@@ -10,13 +10,12 @@ from arcane_mage.models import ArcaneCreatorConfig, Hypervisor, HypervisorConfig
 
 class TestHypervisorConfig:
     def test_from_dict(self):
-        data = {
-            "url": "https://pve.local:8006",
-            "auth_type": "token",
-            "credential": "user@pam!token=secret",
-            "keychain": False,
-        }
-        config = HypervisorConfig(**data)
+        config = HypervisorConfig(
+            url="https://pve.local:8006",
+            auth_type="token",
+            credential="user@pam!token=secret",
+            keychain=False,
+        )
 
         assert config.url == "https://pve.local:8006"
         assert config.auth_type == "token"

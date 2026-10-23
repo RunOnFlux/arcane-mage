@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import ClassVar
@@ -29,7 +30,7 @@ from .screens import (
 class ArcaneMage(App):
     CSS_PATH = "arcane_mage.tcss"
     AUTO_FOCUS = None
-    SCREENS: ClassVar[dict[str, type[Screen]]] = {
+    SCREENS: ClassVar[dict[str, Callable[[], Screen]]] = {
         "welcome": WelcomeScreen,
     }
 
@@ -64,7 +65,7 @@ class ArcaneMage(App):
         screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
         screen.validate_hypervisors(hypervisor)
 
-    def del_hypervisor_callback(self, hypervisor: HypervisorConfig, delete: bool) -> None:
+    def del_hypervisor_callback(self, hypervisor: HypervisorConfig, delete: bool | None) -> None:
         if not delete:
             return
 
@@ -150,8 +151,11 @@ class ArcaneMage(App):
     def on_provision_node(self, event: WelcomeScreenProxmox.ProvisionNode) -> None:
         self.push_screen(
             ProvisionNodeScreen(event.fluxnode),
-            self.provision_node_callback,
+            self.provision_configured_node,
         )
+
+    async def provision_configured_node(self, fluxnode: ArcaneOsConfig | None) -> None:
+        await self.provision_node_callback(fluxnode)
 
     @on(WelcomeScreenProxmox.ProvisionAllNodes)
     def on_provision_all_nodes(self, event: WelcomeScreenProxmox.ProvisionAllNodes) -> None:
@@ -188,8 +192,10 @@ class ArcaneMage(App):
 
         needs_pop = len(provisionable_nodes) > 1
 
-        if delay and configured_node != provisionable_nodes.last:
-            worker = self.screen.show_delay(delay)
+        info_screen = self.screen
+
+        if delay and configured_node != provisionable_nodes.last and isinstance(info_screen, ProvisioningInfoScreen):
+            worker = info_screen.show_delay(delay)
 
             try:
                 await worker.wait()
@@ -218,8 +224,10 @@ class ArcaneMage(App):
             if not result:
                 break
 
-            if delay and not last:
-                worker = self.screen.show_delay(delay)
+            info_screen = self.screen
+
+            if delay and not last and isinstance(info_screen, ProvisioningInfoScreen):
+                worker = info_screen.show_delay(delay)
 
                 try:
                     await worker.wait()

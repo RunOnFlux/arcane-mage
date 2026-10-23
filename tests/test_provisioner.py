@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from arcane_mage.provisioner import TIER_CONFIG, Provisioner, is_api_min_version
-from arcane_mage.proxmox import ApiResponse
+from arcane_mage.proxmox import ApiFailure, ApiSuccess
 
 
 class TestIsApiMinVersion:
@@ -63,8 +63,7 @@ class TestProvisionerValidation:
         return Provisioner(api=mock_api)
 
     async def test_validate_api_version_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_api_version.return_value = ApiResponse(
-            status=200,
+        mock_api.get_api_version.return_value = ApiSuccess(
             payload={"version": "8.4.1"},
         )
 
@@ -74,8 +73,7 @@ class TestProvisionerValidation:
         assert msg == "8.4.1"
 
     async def test_validate_api_version_too_old(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_api_version.return_value = ApiResponse(
-            status=200,
+        mock_api.get_api_version.return_value = ApiSuccess(
             payload={"version": "7.0.0"},
         )
 
@@ -85,7 +83,7 @@ class TestProvisionerValidation:
         assert "too old" in msg
 
     async def test_validate_api_version_unreachable(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_api_version.return_value = ApiResponse(error="Connection refused")
+        mock_api.get_api_version.return_value = ApiFailure(error="Connection refused")
 
         ok, msg = await provisioner.validate_api_version("node1")
 
@@ -93,8 +91,7 @@ class TestProvisionerValidation:
         assert "Unable to get" in msg
 
     async def test_validate_network_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_networks.return_value = ApiResponse(
-            status=200,
+        mock_api.get_networks.return_value = ApiSuccess(
             payload=[{"iface": "vmbr0"}, {"iface": "vmbr1"}],
         )
 
@@ -103,8 +100,7 @@ class TestProvisionerValidation:
         assert result is True
 
     async def test_validate_network_missing(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_networks.return_value = ApiResponse(
-            status=200,
+        mock_api.get_networks.return_value = ApiSuccess(
             payload=[{"iface": "vmbr0"}],
         )
 
@@ -113,8 +109,7 @@ class TestProvisionerValidation:
         assert result is False
 
     async def test_validate_iso_version_found(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_storage_content.return_value = ApiResponse(
-            status=200,
+        mock_api.get_storage_content.return_value = ApiSuccess(
             payload=[
                 {"content": "iso", "volid": "local:iso/FluxLive-1749291196.iso"},
             ],
@@ -125,8 +120,7 @@ class TestProvisionerValidation:
         assert result is True
 
     async def test_validate_iso_version_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_storage_content.return_value = ApiResponse(
-            status=200,
+        mock_api.get_storage_content.return_value = ApiSuccess(
             payload=[
                 {"content": "iso", "volid": "local:iso/other.iso"},
             ],
@@ -137,7 +131,7 @@ class TestProvisionerValidation:
         assert result is False
 
     async def test_start_vm(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.start_vm.return_value = ApiResponse(status=200, payload="UPID:task123")
+        mock_api.start_vm.return_value = ApiSuccess(payload="UPID:task123")
         mock_api.wait_for_task.return_value = True
 
         result = await provisioner.start_vm(100, "node1")
@@ -146,7 +140,7 @@ class TestProvisionerValidation:
         mock_api.wait_for_task.assert_called_once_with("UPID:task123", "node1", 20)
 
     async def test_create_vm_config_cumulus(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_next_id.return_value = ApiResponse(status=200, payload=100)
+        mock_api.get_next_id.return_value = ApiSuccess(payload=100)
 
         config = await provisioner.create_vm_config(
             vm_name="test-vm",
@@ -163,14 +157,14 @@ class TestProvisionerValidation:
     async def test_create_vm_config_invalid_tier(self, provisioner: Provisioner, mock_api: AsyncMock):
         config = await provisioner.create_vm_config(
             vm_name="test-vm",
-            tier="invalid",
+            tier="invalid",  # ty: ignore[invalid-argument-type]
             network_bridge="vmbr0",
         )
 
         assert config is None
 
     async def test_stop_vm_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.stop_vm.return_value = ApiResponse(status=200, payload="UPID:stop123")
+        mock_api.stop_vm.return_value = ApiSuccess(payload="UPID:stop123")
         mock_api.wait_for_task.return_value = True
 
         result = await provisioner.stop_vm(100, "node1")
@@ -180,14 +174,14 @@ class TestProvisionerValidation:
         mock_api.wait_for_task.assert_called_once_with("UPID:stop123", "node1", 30)
 
     async def test_stop_vm_failure(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.stop_vm.return_value = ApiResponse(error="Connection refused")
+        mock_api.stop_vm.return_value = ApiFailure(error="Connection refused")
 
         result = await provisioner.stop_vm(100, "node1")
 
         assert result is False
 
     async def test_delete_vm_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del123")
+        mock_api.delete_vm.return_value = ApiSuccess(payload="UPID:del123")
         mock_api.wait_for_task.return_value = True
 
         result = await provisioner.delete_vm(100, "node1")
@@ -197,7 +191,7 @@ class TestProvisionerValidation:
         mock_api.wait_for_task.assert_called_once_with("UPID:del123", "node1", 30)
 
     async def test_delete_vm_failure(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.delete_vm.return_value = ApiResponse(error="Connection refused")
+        mock_api.delete_vm.return_value = ApiFailure(error="Connection refused")
 
         result = await provisioner.delete_vm(100, "node1")
 
@@ -205,12 +199,11 @@ class TestProvisionerValidation:
 
     async def test_deprovision_node_success(self, provisioner: Provisioner, mock_api: AsyncMock):
         """VM found, running, stopped, then deleted."""
-        mock_api.get_vms.return_value = ApiResponse(
-            status=200,
+        mock_api.get_vms.return_value = ApiSuccess(
             payload=[{"vmid": 100, "name": "graham", "status": "running"}],
         )
-        mock_api.stop_vm.return_value = ApiResponse(status=200, payload="UPID:stop1")
-        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.stop_vm.return_value = ApiSuccess(payload="UPID:stop1")
+        mock_api.delete_vm.return_value = ApiSuccess(payload="UPID:del1")
         mock_api.wait_for_task.return_value = True
 
         fluxnode = AsyncMock()
@@ -224,8 +217,7 @@ class TestProvisionerValidation:
         mock_api.delete_vm.assert_called_once_with(100, "bigchug")
 
     async def test_deprovision_node_vm_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_vms.return_value = ApiResponse(
-            status=200,
+        mock_api.get_vms.return_value = ApiSuccess(
             payload=[{"vmid": 200, "name": "other-vm", "status": "running"}],
         )
 
@@ -250,11 +242,10 @@ class TestProvisionerValidation:
         assert any("No hypervisor" in msg for _, msg in messages)
 
     async def test_deprovision_vm_by_name_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_vms.return_value = ApiResponse(
-            status=200,
+        mock_api.get_vms.return_value = ApiSuccess(
             payload=[{"vmid": 100, "name": "graham", "status": "stopped"}],
         )
-        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.delete_vm.return_value = ApiSuccess(payload="UPID:del1")
         mock_api.wait_for_task.return_value = True
 
         result = await provisioner.deprovision_vm("bigchug", vm_name="graham")
@@ -263,11 +254,10 @@ class TestProvisionerValidation:
         mock_api.delete_vm.assert_called_once_with(100, "bigchug")
 
     async def test_deprovision_vm_by_id_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_vms.return_value = ApiResponse(
-            status=200,
+        mock_api.get_vms.return_value = ApiSuccess(
             payload=[{"vmid": 100, "name": "graham", "status": "stopped"}],
         )
-        mock_api.delete_vm.return_value = ApiResponse(status=200, payload="UPID:del1")
+        mock_api.delete_vm.return_value = ApiSuccess(payload="UPID:del1")
         mock_api.wait_for_task.return_value = True
 
         result = await provisioner.deprovision_vm("bigchug", vm_id=100)
@@ -276,8 +266,7 @@ class TestProvisionerValidation:
         mock_api.delete_vm.assert_called_once_with(100, "bigchug")
 
     async def test_deprovision_vm_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_vms.return_value = ApiResponse(
-            status=200,
+        mock_api.get_vms.return_value = ApiSuccess(
             payload=[{"vmid": 200, "name": "other", "status": "running"}],
         )
 

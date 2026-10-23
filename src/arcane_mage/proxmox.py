@@ -5,14 +5,14 @@ import contextlib
 import json
 import types
 import urllib.parse
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from io import BufferedReader
 from pathlib import Path
 from socket import AF_INET
 from time import monotonic
-from typing import Literal
+from typing import Literal, NotRequired, TypedDict
 
 import aiohttp
 from aiohttp import (
@@ -23,6 +23,7 @@ from aiohttp import (
     ContentTypeError,
     TCPConnector,
 )
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 
 # Concrete type for HTTP request data passed to aiohttp methods
 type HttpData = dict | aiohttp.MultipartWriter | None
@@ -63,21 +64,125 @@ class ResolvedConnection:
     token: ParsedToken
 
 
-@dataclass
-class ApiResponse:
-    """Response wrapper for Proxmox API calls, with status, payload, and error info."""
+@dataclass(frozen=True)
+class ApiSuccess[T]:
+    """A successful Proxmox API call: its `data`, validated against the endpoint's shape."""
+
+    payload: T
+    status: int = 200
+
+    @property
+    def unauthorized(self) -> Literal[False]:
+        return False
+
+    def __bool__(self) -> Literal[True]:
+        return True
+
+
+@dataclass(frozen=True)
+class ApiFailure:
+    """A failed Proxmox API call: refused, unreachable, timed out, or answered with data
+    that does not match the endpoint's shape."""
 
     status: int | None = None
-    payload: dict | list | str | None = None
-    timed_out: bool = False
     error: str | None = None
+    timed_out: bool = False
 
     @property
     def unauthorized(self) -> bool:
         return self.status == 401
 
-    def __bool__(self) -> bool:
-        return self.status == 200 and not self.error
+    def __bool__(self) -> Literal[False]:
+        return False
+
+
+# `if not res:` narrows to ApiFailure; past it, `res.payload` has the endpoint's type.
+type ApiResponse[T] = ApiSuccess[T] | ApiFailure
+
+# Payload shapes name the fields arcane-mage reads; every other field Proxmox sends is kept.
+_KEEP_ALL_FIELDS = ConfigDict(extra="allow")
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class HypervisorNode(TypedDict):
+    node: str
+    status: NotRequired[str]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class ClusterConfigNode(TypedDict):
+    node: str
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class NodeVersion(TypedDict):
+    version: str
+    release: NotRequired[str]
+    repoid: NotRequired[str]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class NodeStorage(TypedDict):
+    storage: str
+    content: str
+    avail: NotRequired[int]
+    total: NotRequired[int]
+    used: NotRequired[int]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class StorageConfig(TypedDict):
+    storage: str
+    type: str
+    content: NotRequired[str]
+    shared: NotRequired[int]
+    nodes: NotRequired[str]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class StorageVolume(TypedDict):
+    volid: str
+    content: str
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class NetworkIface(TypedDict):
+    iface: str
+    type: NotRequired[str]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class VmSummary(TypedDict):
+    vmid: int
+    status: str
+    name: NotRequired[str]
+    cpu: NotRequired[float]
+    mem: NotRequired[int]
+    maxmem: NotRequired[int]
+    disk: NotRequired[int]
+    maxdisk: NotRequired[int]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class TaskStatus(TypedDict):
+    status: str
+    exitstatus: NotRequired[str]
+
+
+# A task-starting call answers with the task's UPID.
+_UPID = TypeAdapter(str)
+_NONE = TypeAdapter(type(None))
+_HYPERVISOR_NODES = TypeAdapter(list[HypervisorNode])
+_CLUSTER_CONFIG_NODES = TypeAdapter(list[ClusterConfigNode])
+_NODE_VERSION = TypeAdapter(NodeVersion)
+_NODE_STORAGE = TypeAdapter(list[NodeStorage])
+_STORAGE_CONFIG = TypeAdapter(list[StorageConfig])
+_STORAGE_VOLUMES = TypeAdapter(list[StorageVolume])
+_NETWORK_IFACES = TypeAdapter(list[NetworkIface])
+_VMS = TypeAdapter(list[VmSummary])
+_VM_CONFIG = TypeAdapter(dict[str, str | int | float])
+_TASK_STATUS = TypeAdapter(TaskStatus)
+_NEXT_ID = TypeAdapter(int)
 
 
 class ProxmoxApi:
@@ -203,23 +308,31 @@ class ProxmoxApi:
         )
 
     @staticmethod
-    async def handle_api_response(
+    async def handle_api_response[T](
         response: aiohttp.ClientResponse,
-    ) -> ApiResponse:
+        shape: TypeAdapter[T],
+    ) -> ApiResponse[T]:
         try:
             response.raise_for_status()
         except ClientResponseError as e:
-            return ApiResponse(status=e.status, error=e.message)
+            return ApiFailure(status=e.status, error=e.message)
 
         try:
-            payload: dict = await response.json()
+            body: dict = await response.json()
         except (json.JSONDecodeError, ContentTypeError) as e:
-            return ApiResponse(status=response.status, error=str(e))
+            return ApiFailure(status=response.status, error=str(e))
 
-        data = payload.get("data")
-        message = payload.get("message")
+        if message := body.get("message"):
+            return ApiFailure(status=response.status, error=message)
 
-        return ApiResponse(status=response.status, payload=data, error=message)
+        try:
+            payload = shape.validate_python(body.get("data"))
+        except ValidationError as e:
+            first = e.errors()[0]
+            where = ".".join(str(part) for part in first["loc"]) or "data"
+            return ApiFailure(status=response.status, error=f"Unexpected response at {where}: {first['msg']}")
+
+        return ApiSuccess(payload=payload, status=response.status)
 
     def __init__(
         self,
@@ -244,7 +357,7 @@ class ProxmoxApi:
         await self.close()
 
     @asynccontextmanager
-    async def session(self) -> AsyncIterator[None]:
+    async def session(self) -> AsyncGenerator[None]:
         try:
             yield
         finally:
@@ -253,121 +366,122 @@ class ProxmoxApi:
     async def close(self) -> None:
         await self.client.close()
 
-    async def _do_http(
+    async def _do_http[T](
         self,
         verb: Literal["get", "put", "post", "delete"],
         path: str,
+        shape: TypeAdapter[T],
         data: HttpData = None,
-    ) -> ApiResponse:
+    ) -> ApiResponse[T]:
         method = getattr(self.client, verb)
 
         try:
             res = await method(path, ssl=self.verify_ssl, data=data)
         except ConnectionTimeoutError:
-            return ApiResponse(timed_out=True)
+            return ApiFailure(timed_out=True)
         except ClientError:
-            return ApiResponse(error="Connection Error")
+            return ApiFailure(error="Connection Error")
 
-        return await self.handle_api_response(res)
+        return await self.handle_api_response(res, shape)
 
-    async def _do_get(self, path: str) -> ApiResponse:
-        return await self._do_http("get", path)
+    async def _do_get[T](self, path: str, shape: TypeAdapter[T]) -> ApiResponse[T]:
+        return await self._do_http("get", path, shape)
 
-    async def _do_post(self, path: str, data: HttpData = None) -> ApiResponse:
-        return await self._do_http("post", path, data)
+    async def _do_post[T](self, path: str, shape: TypeAdapter[T], data: HttpData = None) -> ApiResponse[T]:
+        return await self._do_http("post", path, shape, data)
 
-    async def _do_put(self, path: str, data: HttpData = None) -> ApiResponse:
-        return await self._do_http("put", path, data)
+    async def _do_put[T](self, path: str, shape: TypeAdapter[T], data: HttpData = None) -> ApiResponse[T]:
+        return await self._do_http("put", path, shape, data)
 
-    async def _do_delete(self, path: str) -> ApiResponse:
-        return await self._do_http("delete", path)
+    async def _do_delete[T](self, path: str, shape: TypeAdapter[T]) -> ApiResponse[T]:
+        return await self._do_http("delete", path, shape)
 
-    async def get_api_version(self, node: str) -> ApiResponse:
-        res = await self._do_get(f"nodes/{node}/version")
-
-        return res
-
-    async def get_cluster_nodes(self) -> ApiResponse:
-        res = await self._do_get("cluster/config/nodes")
+    async def get_api_version(self, node: str) -> ApiResponse[NodeVersion]:
+        res = await self._do_get(f"nodes/{node}/version", _NODE_VERSION)
 
         return res
 
-    async def get_hypervisor_nodes(self) -> ApiResponse:
-        res = await self._do_get("nodes")
+    async def get_cluster_nodes(self) -> ApiResponse[list[ClusterConfigNode]]:
+        res = await self._do_get("cluster/config/nodes", _CLUSTER_CONFIG_NODES)
 
         return res
 
-    async def get_networks(self, node: str) -> ApiResponse:
+    async def get_hypervisor_nodes(self) -> ApiResponse[list[HypervisorNode]]:
+        res = await self._do_get("nodes", _HYPERVISOR_NODES)
+
+        return res
+
+    async def get_networks(self, node: str) -> ApiResponse[list[NetworkIface]]:
         endpoint = f"nodes/{node}/network"
 
-        res = await self._do_get(endpoint)
+        res = await self._do_get(endpoint, _NETWORK_IFACES)
 
         return res
 
-    async def get_storage_state(self, node: str) -> ApiResponse:
+    async def get_storage_state(self, node: str) -> ApiResponse[list[NodeStorage]]:
         endpoint = f"nodes/{node}/storage"
 
-        res = await self._do_get(endpoint)
+        res = await self._do_get(endpoint, _NODE_STORAGE)
 
         return res
 
-    async def get_storage_content(self, node: str, location: str) -> ApiResponse:
+    async def get_storage_content(self, node: str, location: str) -> ApiResponse[list[StorageVolume]]:
         endpoint = f"nodes/{node}/storage/{location}/content"
 
-        res = await self._do_get(endpoint)
+        res = await self._do_get(endpoint, _STORAGE_VOLUMES)
 
         return res
 
-    async def get_storage_config(self) -> ApiResponse:
-        res = await self._do_get("storage")
+    async def get_storage_config(self) -> ApiResponse[list[StorageConfig]]:
+        res = await self._do_get("storage", _STORAGE_CONFIG)
 
         return res
 
-    async def set_storage_content(self, storage_id: str, content: str) -> ApiResponse:
+    async def set_storage_content(self, storage_id: str, content: str) -> ApiResponse[None]:
         endpoint = f"storage/{storage_id}"
         data = {"content": content}
 
-        res = await self._do_put(endpoint, data=data)
+        res = await self._do_put(endpoint, _NONE, data=data)
 
         return res
 
     async def download_iso(
         self, node: str, url: str, filename: str, storage: str, verify_certs: bool = True
-    ) -> ApiResponse:
+    ) -> ApiResponse[str]:
         endpoint = f"nodes/{node}/storage/{storage}/download-url"
         data = {
             "content": "iso",
             "filename": filename,
             "url": url,
-            "verify-certificates": verify_certs,
+            "verify-certificates": int(verify_certs),
         }
 
-        res = await self._do_post(endpoint, data=data)
+        res = await self._do_post(endpoint, _UPID, data=data)
 
         return res
 
-    async def get_next_id(self) -> ApiResponse:
-        res = await self._do_get("cluster/nextid")
+    async def get_next_id(self) -> ApiResponse[int]:
+        res = await self._do_get("cluster/nextid", _NEXT_ID)
 
         return res
 
-    async def create_vm(self, config: dict, node: str) -> ApiResponse:
-        res = await self._do_post(f"nodes/{node}/qemu", data=config)
+    async def create_vm(self, config: dict, node: str) -> ApiResponse[str]:
+        res = await self._do_post(f"nodes/{node}/qemu", _UPID, data=config)
 
         return res
 
-    async def start_vm(self, vm_id: int, node: str) -> ApiResponse:
+    async def start_vm(self, vm_id: int, node: str) -> ApiResponse[str]:
         endpoint = f"nodes/{node}/qemu/{vm_id}/status/start"
 
-        res = await self._do_post(endpoint)
+        res = await self._do_post(endpoint, _UPID)
 
         return res
 
-    async def get_task(self, task_id: str, node: str) -> ApiResponse:
+    async def get_task(self, task_id: str, node: str) -> ApiResponse[TaskStatus]:
         quoted_task = urllib.parse.quote(task_id)
         endpoint = f"nodes/{node}/tasks/{quoted_task}/status"
 
-        res = await self._do_get(endpoint)
+        res = await self._do_get(endpoint, _TASK_STATUS)
 
         return res
 
@@ -396,11 +510,11 @@ class ProxmoxApi:
 
         return exit_status == "OK"
 
-    async def delete_file(self, file_name: str, node: str, storage: str, content: str) -> ApiResponse:
+    async def delete_file(self, file_name: str, node: str, storage: str, content: str) -> ApiResponse[str]:
         volume = f"{storage}:{content}/{file_name}"
         endpoint = f"nodes/{node}/storage/{storage}/content/{volume}"
 
-        res = await self._do_delete(endpoint)
+        res = await self._do_delete(endpoint, _UPID)
 
         return res
 
@@ -410,11 +524,11 @@ class ProxmoxApi:
         node: str,
         storage: str,
         file_name: str | None = None,
-    ) -> ApiResponse:
+    ) -> ApiResponse[str]:
         endpoint = f"nodes/{node}/storage/{storage}/upload"
 
         if isinstance(file, bytes) and not file_name:
-            return ApiResponse(error="Unuseable file")
+            return ApiFailure(error="Unuseable file")
 
         # aiohttp's MultipartWriter.append() requires a synchronous file-like
         # object, so we open with the stdlib and manage the handle with ExitStack
@@ -427,7 +541,7 @@ class ProxmoxApi:
                 payload = file
                 resolved_name = file_name  # already validated non-None above
             else:
-                return ApiResponse(error="Unuseable file")
+                return ApiFailure(error="Unuseable file")
 
             # Why proxmox does this is beyond me. This took hours to figure out. Had to
             # packet capture and decode the ssl traffic with wireshark. The multipart data
@@ -447,35 +561,34 @@ class ProxmoxApi:
                     content_type = part[0].headers.pop(aiohttp.hdrs.CONTENT_TYPE)
                     part[0].headers[aiohttp.hdrs.CONTENT_TYPE] = content_type
 
-                res = await self._do_post(
-                    endpoint,
-                    data=mpwriter,
-                )
+                res = await self._do_post(endpoint, _UPID, data=mpwriter)
 
         return res
 
-    async def get_vms(self, node: str) -> ApiResponse:
+    async def get_vms(self, node: str) -> ApiResponse[list[VmSummary]]:
         endpoint = f"nodes/{node}/qemu"
 
-        res = await self._do_get(endpoint)
+        res = await self._do_get(endpoint, _VMS)
 
         return res
 
-    async def get_vm(self, vm_id: int, node: str) -> ApiResponse:
+    async def get_vm(self, vm_id: int, node: str) -> ApiResponse[dict[str, str | int | float]]:
         endpoint = f"nodes/{node}/qemu/{vm_id}/config"
 
-        res = await self._do_get(endpoint)
+        res = await self._do_get(endpoint, _VM_CONFIG)
 
         return res
 
-    async def stop_vm(self, vm_id: int, node: str) -> ApiResponse:
+    async def stop_vm(self, vm_id: int, node: str) -> ApiResponse[str]:
         endpoint = f"nodes/{node}/qemu/{vm_id}/status/stop"
 
-        res = await self._do_post(endpoint)
+        res = await self._do_post(endpoint, _UPID)
 
         return res
 
-    async def delete_vm(self, vm_id: int, node: str, purge: bool = True, destroy_disks: bool = True) -> ApiResponse:
+    async def delete_vm(
+        self, vm_id: int, node: str, purge: bool = True, destroy_disks: bool = True
+    ) -> ApiResponse[str]:
         params = []
         if purge:
             params.append("purge=1")
@@ -484,6 +597,6 @@ class ProxmoxApi:
         query = "&".join(params)
         endpoint = f"nodes/{node}/qemu/{vm_id}{'?' + query if query else ''}"
 
-        res = await self._do_delete(endpoint)
+        res = await self._do_delete(endpoint, _UPID)
 
         return res
