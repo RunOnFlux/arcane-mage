@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `validate` now accepts SDN VNets applied on the target node, via `/nodes/{node}/network?type=any_bridge`. The same call also rejects interfaces a VM cannot attach to (`eth0`, `bond0`, `vmbr0.50`).
+
 ## 3.1.0
 
 ### Added

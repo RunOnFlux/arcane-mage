@@ -412,7 +412,8 @@ class ProxmoxApi:
         return res
 
     async def get_networks(self, node: str) -> ApiResponse[list[NetworkIface]]:
-        endpoint = f"nodes/{node}/network"
+        """The bridges on `node` a VM can attach to, SDN VNets applied there included."""
+        endpoint = f"nodes/{node}/network?type=any_bridge"
 
         res = await self._do_get(endpoint, _NETWORK_IFACES)
 
