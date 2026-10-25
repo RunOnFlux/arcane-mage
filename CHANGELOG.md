@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.0
+
+### Added
+
+- **SSH keys by tier**: `system.ssh_keys` takes `operate` keys (log in as `fluxtui` and `operator`) and `status` keys (log in as `fluxstatus`, read only), beside `ssh_pubkey`, which is one more operate key and the only key ISOs before tiered keys read. Documented in `docs/configuration.md` and `examples/all_settings.yaml`.
+- **Ansible collection 1.1.0**: the `provision` module takes `ssh_keys` (`operate`, `status`) and passes it to `system.ssh_keys`.
+
 ## 3.1.0
 
 ### Added

@@ -24,7 +24,7 @@ global:
     - 192.168.1.20:16197
     - 192.168.1.21:16187
   system: &system
-    ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator@fluxnode
+    ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBOBbpq+eqwxYUl1F1NNyZyw29FV0Ag2wwZhJbf87yiQ operator@fluxnode
     keyboard:
       layout: us
       variant: ""

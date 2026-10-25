@@ -13,7 +13,7 @@ nodes:
       node_tier: cumulus
     system:
       hostname: mynode
-      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator@fluxnode # optional
+      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBOBbpq+eqwxYUl1F1NNyZyw29FV0Ag2wwZhJbf87yiQ operator@fluxnode # optional
     network:
       ip_allocation: static
       address_config:

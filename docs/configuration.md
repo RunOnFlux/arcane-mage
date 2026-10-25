@@ -82,9 +82,25 @@ OS-level configuration for the installed system.
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `hostname` | string | yes | | System hostname (2-253 characters) |
-| `ssh_pubkey` | string | no | | SSH public key in OpenSSH format (e.g. `ssh-ed25519 AAAA...`) |
+| `ssh_pubkey` | string | no | | SSH public key in OpenSSH format (e.g. `ssh-ed25519 AAAA...`): an operate key |
+| `ssh_keys.operate` | list of strings | no | `[]` | Operate keys: log in as `fluxtui` (the console over SSH) and `operator` (the restricted shell) |
+| `ssh_keys.status` | list of strings | no | `[]` | Status keys: log in as `fluxstatus`, read-only status and benchmarks |
 | `keyboard.layout` | string | no | `us` | Keyboard layout |
 | `keyboard.variant` | string | no | `""` | Keyboard variant |
+
+SSH keys are given by tier in `ssh_keys`. `ssh_pubkey` is one more operate key; ISOs from before
+tiered keys read only `ssh_pubkey`, so set it as well when installing such an ISO. A key goes in one
+tier only: the node refuses a key listed as both operate and status. Every key is in OpenSSH format.
+
+```yaml
+system:
+  hostname: node1
+  ssh_keys:
+    operate:
+      - ssh-ed25519 AAAA... operator@laptop
+    status:
+      - ssh-ed25519 AAAA... monitoring@grafana
+```
 
 The console password is set interactively during provisioning (via TUI or prompted by the CLI). It is hashed with Yescrypt before being written to the VM.
 

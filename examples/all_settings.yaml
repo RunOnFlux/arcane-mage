@@ -30,7 +30,12 @@ nodes:
           - 1.1.1.1
     system: # required
       hostname: mynode # required
-      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator@fluxnode # optional
+      ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBOBbpq+eqwxYUl1F1NNyZyw29FV0Ag2wwZhJbf87yiQ operator@fluxnode # optional, an operate key; the only key ISOs before tiered keys read
+      ssh_keys: # optional, keys by tier
+        operate: # the console over SSH (fluxtui) and the operator shell
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAymvdKZa6rH5UhD91LkVJKMgOICw7s6ny0QW1Vlti0D operator@laptop
+        status: # read-only status and benchmarks (fluxstatus)
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINoAbhZZqPwC9xKRGXIpj0E5pKOOMndSCaxaD5OnRK24 monitoring@grafana
       keyboard: # optional
         layout: us # this is the default
         variant: ""

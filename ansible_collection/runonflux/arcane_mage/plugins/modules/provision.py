@@ -93,8 +93,25 @@ options:
     type: str
     no_log: true
   ssh_pubkey:
-    description: SSH public key for the operator account (OpenSSH format).
+    description: >
+      SSH public key (OpenSSH format), an operate key. ISOs from before tiered
+      keys read only this key.
     type: str
+  ssh_keys:
+    description: >
+      SSH public keys by tier (OpenSSH format). A key goes in one tier only.
+    type: dict
+    suboptions:
+      operate:
+        description: Keys that log in as fluxtui (the console over SSH) and operator.
+        type: list
+        elements: str
+        default: []
+      status:
+        description: Keys that log in as fluxstatus (read-only status and benchmarks).
+        type: list
+        elements: str
+        default: []
   keyboard_layout:
     description: Keyboard layout for the installation.
     type: str
@@ -183,6 +200,11 @@ EXAMPLES = r"""
     hostname: tsa-vs1
     console_password: "MySecurePassword123!"
     ssh_pubkey: "ssh-ed25519 AAAAC3..."
+    ssh_keys:
+      operate:
+        - "ssh-ed25519 AAAAC3... operator@laptop"
+      status:
+        - "ssh-ed25519 AAAAC3... monitoring@grafana"
     flux_id: "1ExampleFluxAddress"
     identity_key: "L1ExampleIdentityKey"
     tx_id: "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
@@ -273,6 +295,12 @@ def build_config_dict(params):
 
     if params.get("ssh_pubkey"):
         system["ssh_pubkey"] = params["ssh_pubkey"]
+
+    if ssh_keys := params.get("ssh_keys"):
+        system["ssh_keys"] = {
+            "operate": ssh_keys.get("operate") or [],
+            "status": ssh_keys.get("status") or [],
+        }
 
     # Network
     network = {"ip_allocation": params["ip_allocation"]}
@@ -395,6 +423,13 @@ def main():
         hostname=dict(type="str", required=True),
         console_password=dict(type="str", no_log=True),
         ssh_pubkey=dict(type="str"),
+        ssh_keys=dict(
+            type="dict",
+            options=dict(
+                operate=dict(type="list", elements="str", default=[]),
+                status=dict(type="list", elements="str", default=[]),
+            ),
+        ),
         keyboard_layout=dict(type="str", default="us"),
         keyboard_variant=dict(type="str", default=""),
         flux_id=dict(type="str", required=True),
