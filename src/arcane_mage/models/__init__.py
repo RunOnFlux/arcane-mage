@@ -17,6 +17,7 @@ from .notifications import DiscordNotification as DiscordNotification
 from .notifications import Notifications as Notifications
 from .notifications import TelegramNotification as TelegramNotification
 from .system import KeyboardConfig as KeyboardConfig
+from .system import SshKeysConfig as SshKeysConfig
 from .system import SystemConfig as SystemConfig
 
 # Internal types — importable via arcane_mage.models.network directly
@@ -42,6 +43,7 @@ __all__ = [
     "MetricsAppConfig",
     "NetworkConfig",
     "Notifications",
+    "SshKeysConfig",
     "SystemConfig",
     "TelegramNotification",
 ]
