@@ -549,4 +549,11 @@ class TestRefreshIso:
 
         result = await provisioner.refresh_iso("pve1", "local")
 
-        assert result.error == "Unexpected release feed answer: None"
+        assert result.error == "Unable to fetch https://images.runonflux.io/arcane/api/latest_release"
+
+    async def test_a_feed_of_the_wrong_shape_fails(self, provisioner: Provisioner, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(provisioner_module, "do_http", AsyncMock(return_value={"iso": "FluxLive-1.iso"}))
+
+        result = await provisioner.refresh_iso("pve1", "local")
+
+        assert result.error == "Unexpected release feed answer: {'iso': 'FluxLive-1.iso'}"
