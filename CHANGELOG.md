@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **VM tags, notes and memory**: the hypervisor config takes `tags` and `description`, set on the VM when it is created, and `memory_mb`, which overrides the tier's memory. The Ansible `provision` module takes all three.
+- **`refresh-iso`**: stages the latest ArcaneOS ISO on a node unless it is there already (`Provisioner.refresh_iso`). The node downloads it and checks it against the release's sha256 sums. `ProxmoxApi.download_iso` takes `sha256`.
+- **`provision --json` gives the VM id**: each node's result carries `vm_id`, and a single node's is also at the top level. `Provisioner.provision_node` writes an assigned id back to `fluxnode.hypervisor.vm_id`.
+
+### Changed
+
+- **Task outcomes**: `ProxmoxApi.wait_for_task` returns a `TaskOutcome`, truthy when the task ended OK, with Proxmox's exit status in `error` when it did not. `Provisioner.create_vm`, `start_vm`, `stop_vm`, `delete_vm`, `upload_arcane_config` and `upload_arcane_efi` return it too. `ApiFailure.reason` gives a failure in one line.
+- **Per-VM EFI images**: each VM uploads, imports and deletes its own `<vmid>_arcane_efi.raw`. `Provisioner.provision_node` no longer takes `delete_efi`, and `upload_arcane_efi` takes the VM id.
+- **Graceful teardown**: deprovisioning a running VM asks it to shut down (ACPI, `ProxmoxApi.shutdown_vm`, 120 s) so ArcaneOS stops its services, and hard-stops it only if it does not go down. The hard stop passes `overrule-shutdown`, so a hung shutdown task cannot block it.
+- A failed provisioning or teardown step carries the reason: "Unable to create VM on hypervisor: unable to create VM 264 - cannot import from …".
+
+### Fixed
+
+- **Task polling on a cluster**: `get_task` polls the node named in the UPID, which for an upload is the node that accepted the connection, not the target node.
+- **Slow creates**: the create task is waited on for up to 600 s and uploads for up to 120 s. A create that outlasted the old 10 s wait had its install images deleted while it was still running.
+- `wait_for_task` returns as soon as a task stops, so a failed task is reported at once.
+- A failed config or EFI upload deletes the files it uploaded.
+- Two provisioning runs sharing an import storage no longer delete each other's EFI image mid-create, and the TUI no longer leaves the shared EFI image behind on every hypervisor but the last node's.
+
 ## 3.2.1
 
 ### Fixed

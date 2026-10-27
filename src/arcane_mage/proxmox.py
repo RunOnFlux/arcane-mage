@@ -92,12 +92,33 @@ class ApiFailure:
     def unauthorized(self) -> bool:
         return self.status == 401
 
+    @property
+    def reason(self) -> str:
+        """The failure in one line, for a message."""
+        if self.timed_out:
+            return "request timed out"
+        if self.status is None:
+            return self.error or "request failed"
+        return f"HTTP {self.status}: {self.error}" if self.error else f"HTTP {self.status}"
+
     def __bool__(self) -> Literal[False]:
         return False
 
 
 # `if not res:` narrows to ApiFailure; past it, `res.payload` has the endpoint's type.
 type ApiResponse[T] = ApiSuccess[T] | ApiFailure
+
+
+@dataclass(frozen=True)
+class TaskOutcome:
+    """How a Proxmox task ended. Truthy when it ended OK; otherwise `error` is Proxmox's
+    exit status, or why the wait gave up."""
+
+    error: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.error is None
+
 
 # Payload shapes name the fields arcane-mage reads; every other field Proxmox sends is kept.
 _KEEP_ALL_FIELDS = ConfigDict(extra="allow")
@@ -447,15 +468,27 @@ class ProxmoxApi:
         return res
 
     async def download_iso(
-        self, node: str, url: str, filename: str, storage: str, verify_certs: bool = True
+        self,
+        node: str,
+        url: str,
+        filename: str,
+        storage: str,
+        verify_certs: bool = True,
+        sha256: str | None = None,
     ) -> ApiResponse[str]:
+        """Have `node` download `url` into `storage`. With `sha256`, Proxmox fails the task
+        when the download does not match it."""
         endpoint = f"nodes/{node}/storage/{storage}/download-url"
-        data = {
+        data: dict[str, str | int] = {
             "content": "iso",
             "filename": filename,
             "url": url,
             "verify-certificates": int(verify_certs),
         }
+
+        if sha256:
+            data["checksum"] = sha256
+            data["checksum-algorithm"] = "sha256"
 
         res = await self._do_post(endpoint, _UPID, data=data)
 
@@ -479,6 +512,12 @@ class ProxmoxApi:
         return res
 
     async def get_task(self, task_id: str, node: str) -> ApiResponse[TaskStatus]:
+        # A UPID ("UPID:<node>:...") names the node the task runs on, which can differ from
+        # `node`: an upload runs on the node that accepted the connection.
+        upid_parts = task_id.split(":")
+        if len(upid_parts) > 1 and upid_parts[0] == "UPID" and upid_parts[1]:
+            node = upid_parts[1]
+
         quoted_task = urllib.parse.quote(task_id)
         endpoint = f"nodes/{node}/tasks/{quoted_task}/status"
 
@@ -486,30 +525,35 @@ class ProxmoxApi:
 
         return res
 
-    async def wait_for_task(self, task_id: str, node: str, max_wait_s: int = 10) -> bool:
+    async def wait_for_task(self, task_id: str, node: str, max_wait_s: int = 10) -> TaskOutcome:
+        """Poll the task until it stops, for at most `max_wait_s` after the first answer."""
         task_res = await self.get_task(task_id, node)
 
         if not task_res:
-            return False
+            return TaskOutcome(error=f"task status unreadable ({task_res.reason})")
 
-        exit_status = task_res.payload.get("exitstatus")
-        # we start the timer here, so we don't include the time it took
-        # to get the first api request
+        task = task_res.payload
         start = monotonic()
-        elapsed = 0.0
 
-        while exit_status != "OK" and elapsed < max_wait_s:
+        while task["status"] != "stopped" and monotonic() - start < max_wait_s:
             await asyncio.sleep(1)
 
             task_res = await self.get_task(task_id, node)
 
             if not task_res:
-                return False
+                return TaskOutcome(error=f"task status unreadable ({task_res.reason})")
 
-            exit_status = task_res.payload.get("exitstatus")
-            elapsed = monotonic() - start
+            task = task_res.payload
 
-        return exit_status == "OK"
+        if task["status"] != "stopped":
+            return TaskOutcome(error=f"task still running after {max_wait_s}s")
+
+        exit_status = task.get("exitstatus")
+
+        if exit_status != "OK":
+            return TaskOutcome(error=exit_status or "task stopped without an exit status")
+
+        return TaskOutcome()
 
     async def delete_file(self, file_name: str, node: str, storage: str, content: str) -> ApiResponse[str]:
         volume = f"{storage}:{content}/{file_name}"
@@ -580,10 +624,20 @@ class ProxmoxApi:
 
         return res
 
+    async def shutdown_vm(self, vm_id: int, node: str, timeout_s: int) -> ApiResponse[str]:
+        """ACPI shutdown, which lets the guest stop its own services. It never forces a stop."""
+        endpoint = f"nodes/{node}/qemu/{vm_id}/status/shutdown"
+
+        res = await self._do_post(endpoint, _UPID, data={"timeout": timeout_s})
+
+        return res
+
     async def stop_vm(self, vm_id: int, node: str) -> ApiResponse[str]:
         endpoint = f"nodes/{node}/qemu/{vm_id}/status/stop"
 
-        res = await self._do_post(endpoint, _UPID)
+        # overrule-shutdown aborts a running shutdown task, which would otherwise hold the
+        # VM's lock and fail the stop.
+        res = await self._do_post(endpoint, _UPID, data={"overrule-shutdown": 1})
 
         return res
 

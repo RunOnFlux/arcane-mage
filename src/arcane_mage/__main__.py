@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import asdict
 from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import TypedDict
@@ -265,7 +266,8 @@ def provision(
                     console.print(f"\n[bold]{hostname}[/bold]")
 
                 result = await provisioner.provision_node(node, callback=callback)
-                results.append({"hostname": hostname, "ok": result, "steps": steps})
+                vm_id = node.hypervisor.vm_id if node.hypervisor else None
+                results.append({"hostname": hostname, "ok": result, "vm_id": vm_id, "steps": steps})
 
                 if not use_json:
                     if result:
@@ -277,9 +279,11 @@ def provision(
                     all_ok = False
 
             if use_json:
-                print(
-                    _json_ok({"nodes": results}) if all_ok else _json_error("Provisioning failed", {"nodes": results})
-                )
+                payload: dict[str, object] = {"nodes": results}
+                # A single node's vm_id is also given at the top level.
+                if len(results) == 1 and results[0]["vm_id"] is not None:
+                    payload["vm_id"] = results[0]["vm_id"]
+                print(_json_ok(payload) if all_ok else _json_error("Provisioning failed", payload))
 
             return all_ok
 
@@ -611,6 +615,50 @@ def validate(
         _handle_error(e, use_json)
 
     if not success:
+        raise typer.Exit(1)
+
+
+@app.command(name="refresh-iso")
+def refresh_iso(
+    url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
+    token: str | None = typer.Option(None, help="API token (also accepts stdin or ARCANE_MAGE_TOKEN)"),
+    hypervisor: str | None = typer.Option(None, "--hypervisor", "-H", help="Use stored hypervisor by name"),
+    node: str = typer.Option(..., "--node", help="Cluster node to stage the ISO on (e.g. pve1)"),
+    storage_iso: str = typer.Option("local", "--storage-iso", help="ISO storage on the node"),
+    use_json: bool = typer.Option(False, "--json", help="Output JSON instead of text"),
+) -> None:
+    """Stage the latest ArcaneOS ISO on a node, unless it is there already."""
+    from .provisioner import Provisioner
+
+    try:
+        conn = _resolve_connection(url, token, hypervisor)
+    except CliError as e:
+        _handle_error(e, use_json)
+
+    async def run():
+        async with ProxmoxApi.from_token(conn.url, conn.token) as api:
+            return await Provisioner(api).refresh_iso(node, storage_iso)
+
+    result = asyncio.run(run())
+    data = asdict(result)
+
+    if use_json:
+        print(_json_ok(data) if result.ok else _json_error(result.error or "ISO refresh failed", data))
+    elif not result.ok:
+        console.print(
+            Panel(f"[red]{result.error}[/red]", title="[bold red]Refresh Failed[/bold red]", border_style="red")
+        )
+    elif result.changed:
+        body = (
+            f"[green]Staged {result.iso}[/green] (build {result.build}, {result.severity} severity, {result.release})"
+        )
+        console.print(Panel(body, title="[bold]ISO Refreshed[/bold]", border_style="green"))
+    else:
+        console.print(
+            Panel(f"[dim]{result.iso} already staged[/dim]", title="[bold]Up to date[/bold]", border_style="green")
+        )
+
+    if not result.ok:
         raise typer.Exit(1)
 
 

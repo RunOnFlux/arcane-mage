@@ -195,7 +195,13 @@ Check which configured nodes are already provisioned:
 arcane-mage status -H pve1 -c my_nodes.yaml
 ```
 
-Deprovision (stop and delete) VMs:
+Stage the latest ArcaneOS ISO on a node. The node downloads it and checks it against the release's sha256 sums; an ISO already there is left alone:
+
+```bash
+arcane-mage refresh-iso -H pve1 --node pve1 --storage-iso local
+```
+
+Deprovision (shut down and delete) VMs:
 
 ```bash
 # From config file

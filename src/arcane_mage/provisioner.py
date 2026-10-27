@@ -5,21 +5,37 @@ import logging
 import tempfile
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, NotRequired, Self, TypedDict
 
 import yaml
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 
 from .fat_writer import FAT12Writer
-from .helpers import do_http
+from .helpers import do_http, do_http_to_file
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
-from .proxmox import ApiResponse, HypervisorNode, ProxmoxApi, VmSummary
+from .proxmox import ApiResponse, HypervisorNode, ProxmoxApi, TaskOutcome, VmSummary
 
 log = logging.getLogger(__name__)
 
 MIN_API_VERSION = "8.4.1"
 MIN_IMPORT_STORAGE_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+# provision_node deletes the install images once the create's wait ends, so the wait must
+# outlast a create on a busy host: allocating the disks and importing the images can take
+# minutes.
+CREATE_TASK_MAX_WAIT_S = 600
+UPLOAD_TASK_MAX_WAIT_S = 120
+
+# A 3+ GB download onto the hypervisor.
+ISO_DOWNLOAD_MAX_WAIT_S = 1800
+
+_RELEASE_FEED = "https://images.runonflux.io/arcane/api/latest_release"
+_RELEASE_BASE = "https://images.runonflux.io/arcane/releases"
+
+# How long a running VM gets to shut itself down before teardown hard-stops it.
+SHUTDOWN_TIMEOUT_S = 120
 
 TIER_CONFIG: dict[str, dict[str, int]] = {
     "cumulus": {"memory_mb": 8192, "scsi_gb": 220, "cpu_cores": 4},
@@ -61,6 +77,8 @@ class VmConfig:
     vga: str
     serial0: str
     startup: str | None = None
+    tags: str | None = None
+    description: str | None = None
 
     def to_proxmox_dict(self) -> dict:
         """Convert to the dict format Proxmox API expects."""
@@ -95,6 +113,12 @@ def _get_vm_config_file_name(vm_id: int) -> str:
     return f"{vm_id}_{_config_image_base}.raw"
 
 
+# Each VM imports its own EFI image, so runs that share an import storage never delete
+# an image another run is still importing.
+def _get_vm_efi_file_name(vm_id: int) -> str:
+    return f"{vm_id}_arcane_efi.raw"
+
+
 async def get_latest_iso_version() -> str | None:
     """Fetch the latest FluxOS ISO version from the release API."""
     res = await do_http("https://images.runonflux.io/api/latest_release", total_timeout=3)
@@ -103,6 +127,47 @@ async def get_latest_iso_version() -> str | None:
         return None
 
     return res.get("iso")
+
+
+@with_config(ConfigDict(extra="allow"))
+class ArcaneRelease(TypedDict):
+    """The latest ArcaneOS release, as the release feed gives it."""
+
+    iso: str
+    build: str
+    checksums: str
+    release: NotRequired[str]
+    severity: NotRequired[str]
+
+
+_ARCANE_RELEASE = TypeAdapter(ArcaneRelease)
+
+
+def _find_sha256(sums: str, file_name: str) -> str | None:
+    """`file_name`'s digest in a `sha256sum`-format checksum file."""
+    for line in sums.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[1].lstrip("*") == file_name:
+            return parts[0]
+
+    return None
+
+
+@dataclass
+class IsoRefreshResult:
+    """The release a refresh found, and whether it staged its ISO. `error` is set when
+    the refresh failed."""
+
+    iso: str | None = None
+    build: str | None = None
+    release: str | None = None
+    severity: str | None = None
+    changed: bool = False
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 
 @dataclass
@@ -235,6 +300,48 @@ class Provisioner:
 
         return any(x["content"] == "iso" and x["volid"].endswith(iso_name) for x in res.payload)
 
+    async def refresh_iso(self, node: str, storage_iso: str) -> IsoRefreshResult:
+        """Stage the latest release's ISO in `node`'s `storage_iso`, unless it is there
+        already. The node downloads it, and checks it against the release's sha256 sums."""
+        feed = await do_http(_RELEASE_FEED, total_timeout=10)
+
+        try:
+            release = _ARCANE_RELEASE.validate_python(feed)
+        except ValidationError:
+            return IsoRefreshResult(error=f"Unexpected release feed answer: {feed}")
+
+        iso = release["iso"]
+        found = IsoRefreshResult(
+            iso=iso,
+            build=release["build"],
+            release=release.get("release"),
+            severity=release.get("severity"),
+        )
+
+        if await self.validate_iso_version(node, iso, storage_iso):
+            return found
+
+        base = f"{_RELEASE_BASE}/{release['build']}"
+
+        with tempfile.TemporaryDirectory(prefix="arcane_mage_") as tmpdir:
+            sums_path = Path(tmpdir) / release["checksums"]
+
+            if not await do_http_to_file(f"{base}/{release['checksums']}", sums_path, read_timeout=60):
+                return replace(found, error=f"Unable to fetch {release['checksums']}")
+
+            sha256 = _find_sha256(sums_path.read_text(), iso)
+
+        if not sha256:
+            return replace(found, error=f"{iso} is not listed in {release['checksums']}")
+
+        res = await self.api.download_iso(node, f"{base}/{iso}", iso, storage_iso, sha256=sha256)
+        outcome = await self._await_task(res, node, ISO_DOWNLOAD_MAX_WAIT_S)
+
+        if not outcome:
+            return replace(found, error=f"Download of {iso} failed: {outcome.error}")
+
+        return replace(found, changed=True)
+
     async def validate_network(self, node: str, network: str) -> bool:
         """Whether `network` is a bridge a VM on `node` can attach to: a Linux or
         OVS bridge, or an SDN VNet applied on that node."""
@@ -245,23 +352,30 @@ class Provisioner:
 
         return any(x["iface"] == network for x in res.payload)
 
-    async def stop_vm(self, vm_id: int, node: str) -> bool:
+    async def _await_task(self, res: ApiResponse[str], node: str, max_wait_s: int) -> TaskOutcome:
+        """Wait on the task `res` started. A request that failed is a failed task."""
+        if not res:
+            return TaskOutcome(error=res.reason)
+
+        return await self.api.wait_for_task(res.payload, node, max_wait_s)
+
+    async def shutdown_vm(self, vm_id: int, node: str) -> TaskOutcome:
+        """Ask the guest to shut down and wait for it to go down."""
+        res = await self.api.shutdown_vm(vm_id, node, SHUTDOWN_TIMEOUT_S)
+
+        return await self._await_task(res, node, SHUTDOWN_TIMEOUT_S + 10)
+
+    async def stop_vm(self, vm_id: int, node: str) -> TaskOutcome:
         """Stop a VM and wait for the task to complete."""
         res = await self.api.stop_vm(vm_id, node)
 
-        if not res:
-            return False
+        return await self._await_task(res, node, 30)
 
-        return await self.api.wait_for_task(res.payload, node, 30)
-
-    async def delete_vm(self, vm_id: int, node: str) -> bool:
+    async def delete_vm(self, vm_id: int, node: str) -> TaskOutcome:
         """Delete a VM (with disk purge) and wait for the task to complete."""
         res = await self.api.delete_vm(vm_id, node)
 
-        if not res:
-            return False
-
-        return await self.api.wait_for_task(res.payload, node, 30)
+        return await self._await_task(res, node, 30)
 
     async def _stop_and_delete_vm(
         self,
@@ -271,27 +385,35 @@ class Provisioner:
         node: str,
         callback: Callable[[bool, str], None] | None = None,
     ) -> bool:
-        """Stop a VM (if running) then delete it with its disks."""
+        """Shut a running VM down, hard-stopping it if it does not go down, then delete it
+        with its disks."""
         if callback:
             callback(True, f"Found VM {vm_name} (id={vm_id}, status={vm_status})")
 
         if vm_status == "running":
             if callback:
-                callback(True, "Stopping VM...")
-            stopped = await self.stop_vm(vm_id, node)
-            if not stopped:
+                callback(True, "Shutting down VM...")
+            shut_down = await self.shutdown_vm(vm_id, node)
+            if shut_down:
                 if callback:
-                    callback(False, "Failed to stop VM")
-                return False
-            if callback:
-                callback(True, "VM stopped")
+                    callback(True, "VM shut down")
+            else:
+                if callback:
+                    callback(True, f"VM did not shut down ({shut_down.error}), stopping...")
+                stopped = await self.stop_vm(vm_id, node)
+                if not stopped:
+                    if callback:
+                        callback(False, f"Failed to stop VM: {stopped.error}")
+                    return False
+                if callback:
+                    callback(True, "VM stopped")
 
         if callback:
             callback(True, "Deleting VM and disks...")
         deleted = await self.delete_vm(vm_id, node)
         if not deleted:
             if callback:
-                callback(False, "Failed to delete VM")
+                callback(False, f"Failed to delete VM: {deleted.error}")
             return False
 
         if callback:
@@ -389,29 +511,25 @@ class Provisioner:
             callback,
         )
 
-    async def start_vm(self, vm_id: int, node: str) -> bool:
+    async def start_vm(self, vm_id: int, node: str) -> TaskOutcome:
         """Start a VM and wait for the task to complete."""
         res = await self.api.start_vm(vm_id, node)
 
-        if not res:
-            return False
+        return await self._await_task(res, node, 20)
 
-        return await self.api.wait_for_task(res.payload, node, 20)
-
-    async def create_vm(self, config: VmConfig, node: str) -> bool:
+    async def create_vm(self, config: VmConfig, node: str) -> TaskOutcome:
         """Create a VM and wait for the task to complete."""
         create_res = await self.api.create_vm(config.to_proxmox_dict(), node)
 
         if not create_res:
             log.error("VM creation failed: status=%s error=%s", create_res.status, create_res.error)
-            return False
 
-        return await self.api.wait_for_task(create_res.payload, node)
+        return await self._await_task(create_res, node, CREATE_TASK_MAX_WAIT_S)
 
     async def delete_install_disks(self, vm_id: int, node: str, storage: str, delete_efi: bool = True) -> bool:
-        """Delete the EFI and config disk images used during provisioning."""
-        efi_file = "arcane_efi.raw"
-        config_file = f"{vm_id}_arcane_config.raw"
+        """Delete the VM's config image, and its EFI image unless `delete_efi` is False."""
+        efi_file = _get_vm_efi_file_name(vm_id)
+        config_file = _get_vm_config_file_name(vm_id)
 
         efi_res: ApiResponse[str] | None = None
 
@@ -426,10 +544,10 @@ class Provisioner:
         if not config_res:
             return False
 
-        return await self.api.wait_for_task(config_res.payload, node)
+        return bool(await self.api.wait_for_task(config_res.payload, node))
 
-    async def upload_arcane_efi(self, node: str, storage: str) -> bool:
-        """Upload the EFI bootloader image to the hypervisor."""
+    async def upload_arcane_efi(self, vm_id: int, node: str, storage: str) -> TaskOutcome:
+        """Upload the VM's EFI bootloader image to the hypervisor."""
         with _efi_gz_resource.open("rb") as f:
             efi_disk = gzip.decompress(f.read())
 
@@ -437,15 +555,12 @@ class Provisioner:
             efi_disk,
             node=node,
             storage=storage,
-            file_name="arcane_efi.raw",
+            file_name=_get_vm_efi_file_name(vm_id),
         )
 
-        if not upload_res:
-            return False
+        return await self._await_task(upload_res, node, UPLOAD_TASK_MAX_WAIT_S)
 
-        return await self.api.wait_for_task(upload_res.payload, node)
-
-    async def upload_arcane_config(self, config: bytes, vm_id: int, node: str, storage: str) -> bool:
+    async def upload_arcane_config(self, config: bytes, vm_id: int, node: str, storage: str) -> TaskOutcome:
         """Write node config into a FAT image and upload to the hypervisor."""
         with tempfile.TemporaryDirectory(prefix="arcane_mage_") as tmpdir:
             config_image_name = _get_vm_config_file_name(vm_id)
@@ -466,10 +581,7 @@ class Provisioner:
                 storage=storage,
             )
 
-        if not upload_res:
-            return False
-
-        return await self.api.wait_for_task(upload_res.payload, node)
+        return await self._await_task(upload_res, node, UPLOAD_TASK_MAX_WAIT_S)
 
     async def create_vm_config(
         self,
@@ -482,7 +594,10 @@ class Provisioner:
         vm_id: int | None = None,
         iso_name: str | None = None,
         startup_config: str | None = None,
+        tags: str | None = None,
+        description: str | None = None,
         disk_limit: int | None = None,
+        memory_mb: int | None = None,
         cpu_limit: float | None = None,
         network_limit: int | None = None,
     ) -> VmConfig | None:
@@ -506,10 +621,11 @@ class Provisioner:
 
         smbios_uuid = str(uuid.uuid4())
         config_img = _get_vm_config_file_name(vm_id)
+        efi_img = _get_vm_efi_file_name(vm_id)
 
         return VmConfig(
             efidisk0=(
-                f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,import-from={storage_import}:import/arcane_efi.raw"
+                f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,import-from={storage_import}:import/{efi_img}"
             ),
             cpu="host",
             ostype="l26",
@@ -521,7 +637,7 @@ class Provisioner:
             smbios1=f"uuid={smbios_uuid}",
             boot="order=scsi0;ide2;net0",
             numa=0,
-            memory=tier_config["memory_mb"],
+            memory=memory_mb or tier_config["memory_mb"],
             tpmstate0=f"{storage_images}:4,version=v2.0",
             cores=tier_config["cpu_cores"],
             cpulimit=cpu_limit,
@@ -537,23 +653,24 @@ class Provisioner:
             vga="std,clipboard=vnc",
             serial0="socket",
             startup=startup_config,
+            tags=tags,
+            description=description,
         )
 
     async def provision_node(
         self,
         fluxnode: ArcaneOsConfig,
         callback: Callable[[bool, str], None] | None = None,
-        delete_efi: bool = True,
     ) -> bool:
         """Provision a single Fluxnode VM on a Proxmox hypervisor.
 
         Args:
             fluxnode: The node configuration to provision.
             callback: Optional progress callback receiving (success, message).
-            delete_efi: Whether to delete the EFI image after provisioning.
 
         Returns:
-            True if provisioning succeeded, False otherwise.
+            True if provisioning succeeded, False otherwise. Once the VM's id is
+            known, `fluxnode.hypervisor.vm_id` holds it, an assigned id included.
         """
 
         def _cb(ok: bool, msg: str) -> None:
@@ -613,9 +730,12 @@ class Provisioner:
             storage_import=hv.storage_import,
             iso_name=hv.iso_name,
             disk_limit=hv.disk_limit,
+            memory_mb=hv.memory_mb,
             cpu_limit=hv.cpu_limit,
             network_limit=hv.network_limit,
             startup_config=hv.startup_config,
+            tags=hv.tags,
+            description=hv.description,
         )
 
         if not vm_config:
@@ -623,21 +743,25 @@ class Provisioner:
             return False
 
         vm_id = vm_config.vmid
+        hv.vm_id = vm_id
 
         config_upload = yaml.dump({"nodes": [fluxnode.to_dict()]})
 
         config_ok = await self.upload_arcane_config(config_upload.encode("utf-8"), vm_id, hv.node, hv.storage_import)
 
+        # An upload whose wait failed can still have landed its file.
         if not config_ok:
-            _cb(False, "Unable to upload Config image to hypervisor")
+            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi=False)
+            _cb(False, f"Unable to upload Config image to hypervisor: {config_ok.error}")
             return False
 
         _cb(True, "Config image uploaded")
 
-        efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
+        efi_ok = await self.upload_arcane_efi(vm_id, hv.node, hv.storage_import)
 
         if not efi_ok:
-            _cb(False, "Unable to upload EFI image to hypervisor")
+            await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
+            _cb(False, f"Unable to upload EFI image to hypervisor: {efi_ok.error}")
             return False
 
         _cb(True, "EFI image uploaded")
@@ -645,13 +769,13 @@ class Provisioner:
         created_ok = await self.create_vm(vm_config, node=hv.node)
 
         if not created_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
-            _cb(False, "Unable to create VM on hypervisor")
+            await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
+            _cb(False, f"Unable to create VM on hypervisor: {created_ok.error}")
             return False
 
         _cb(True, "VM Created")
 
-        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
+        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
 
         if not deleted_ok:
             _cb(False, "Unable to clean up disk images on hypervisor")
@@ -665,7 +789,7 @@ class Provisioner:
         started_ok = await self.start_vm(vm_id, hv.node)
 
         if not started_ok:
-            _cb(False, "Unable to start VM on hypervisor")
+            _cb(False, f"Unable to start VM on hypervisor: {started_ok.error}")
             return False
 
         _cb(True, "VM started")

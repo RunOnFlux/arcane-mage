@@ -73,8 +73,17 @@ options:
   startup_config:
     description: Proxmox startup order config (e.g., order=4,up=360).
     type: str
+  tags:
+    description: Proxmox tags, separated by semicolons.
+    type: str
+  description:
+    description: Proxmox VM notes.
+    type: str
   disk_limit:
     description: Disk I/O limit in MB/s.
+    type: int
+  memory_mb:
+    description: VM memory in MiB, overriding the tier's.
     type: int
   cpu_limit:
     description: CPU limit (0.0-1.0).
@@ -330,8 +339,14 @@ def build_config_dict(params):
         hypervisor["vm_id"] = params["vm_id"]
     if params.get("startup_config"):
         hypervisor["startup_config"] = params["startup_config"]
+    if params.get("tags"):
+        hypervisor["tags"] = params["tags"]
+    if params.get("description"):
+        hypervisor["description"] = params["description"]
     if params.get("disk_limit") is not None:
         hypervisor["disk_limit"] = params["disk_limit"]
+    if params.get("memory_mb") is not None:
+        hypervisor["memory_mb"] = params["memory_mb"]
     if params.get("cpu_limit") is not None:
         hypervisor["cpu_limit"] = params["cpu_limit"]
     if params.get("network_limit") is not None:
@@ -417,7 +432,10 @@ def main():
         storage_import=dict(type="str", default="local"),
         start=dict(type="bool", default=False),
         startup_config=dict(type="str"),
+        tags=dict(type="str"),
+        description=dict(type="str"),
         disk_limit=dict(type="int"),
+        memory_mb=dict(type="int"),
         cpu_limit=dict(type="float"),
         network_limit=dict(type="int"),
         hostname=dict(type="str", required=True),

@@ -19,7 +19,14 @@ from .models import (
     SystemConfig,
 )
 from .password import HashedPassword
-from .provisioner import TIER_CONFIG, HypervisorDiscovery, Provisioner, get_latest_iso_version
+from .provisioner import (
+    TIER_CONFIG,
+    ArcaneRelease,
+    HypervisorDiscovery,
+    IsoRefreshResult,
+    Provisioner,
+    get_latest_iso_version,
+)
 from .proxmox import (
     ApiFailure,
     ApiResponse,
@@ -34,6 +41,7 @@ from .proxmox import (
     ResolvedConnection,
     StorageConfig,
     StorageVolume,
+    TaskOutcome,
     TaskStatus,
     VmSummary,
 )
@@ -47,6 +55,7 @@ __all__ = [
     "ArcaneCreatorConfig",
     "ArcaneOsConfig",
     "ArcaneOsConfigGroup",
+    "ArcaneRelease",
     "Delegate",
     "FluxnodeConfig",
     "GravityConfig",
@@ -58,6 +67,7 @@ __all__ = [
     "Identifier",
     "Identity",
     "InstallerConfig",
+    "IsoRefreshResult",
     "MetricsAppConfig",
     "NetworkConfig",
     "NetworkIface",
@@ -72,6 +82,7 @@ __all__ = [
     "StorageConfig",
     "StorageVolume",
     "SystemConfig",
+    "TaskOutcome",
     "TaskStatus",
     "VmSummary",
     "get_latest_iso_version",

@@ -31,6 +31,15 @@ class TestApiResponse:
         assert resp.timed_out
         assert bool(resp) is False
 
+    def test_reason_names_the_status_and_error(self):
+        assert ApiFailure(status=500, error="storage full").reason == "HTTP 500: storage full"
+
+    def test_reason_without_a_status_is_the_error(self):
+        assert ApiFailure(error="Connection Error").reason == "Connection Error"
+
+    def test_reason_for_a_timeout(self):
+        assert ApiFailure(timed_out=True).reason == "request timed out"
+
 
 TOKEN = ParsedToken("user@pam", "t", "v")
 
@@ -188,3 +197,80 @@ class TestGetNetworks:
 
         assert res
         assert res.payload == [{"iface": "flux50", "type": "vnet"}]
+
+
+UPID = "UPID:pve2:0000A1B2:00C3D4E5:671E0000:qmcreate:101:root@pam:"
+
+
+class TestWaitForTask:
+    async def test_polls_the_node_the_upid_names(self):
+        task = {"status": "stopped", "exitstatus": "OK"}
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 200, {"data": task})) as api:
+            outcome = await api.wait_for_task(UPID, "pve1")
+
+        assert outcome
+        assert outcome.error is None
+
+    async def test_a_failed_task_carries_its_exit_status(self):
+        why = "unable to create VM 101 - cannot import from 'local:import/arcane_efi.raw'"
+        task = {"status": "stopped", "exitstatus": why}
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 200, {"data": task})) as api:
+            outcome = await api.wait_for_task(UPID, "pve2", max_wait_s=600)
+
+        assert not outcome
+        assert outcome.error == why
+
+    async def test_a_task_that_outlasts_the_wait_says_so(self):
+        task = {"status": "running"}
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 200, {"data": task})) as api:
+            outcome = await api.wait_for_task(UPID, "pve2", max_wait_s=0)
+
+        assert outcome.error == "task still running after 0s"
+
+    async def test_an_unreadable_task_says_so(self):
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 500, {"data": None})) as api:
+            outcome = await api.wait_for_task(UPID, "pve2")
+
+        assert outcome.error == "task status unreadable (HTTP 500: Internal Server Error)"
+
+
+class TestVmPower:
+    @staticmethod
+    @asynccontextmanager
+    async def proxmox_recording(path: str, sent: dict[str, str]) -> AsyncGenerator[ProxmoxApi]:
+        """A ProxmoxApi whose POSTs to `path` record their form fields into `sent`."""
+        app = web.Application()
+
+        async def handler(request: web.Request) -> web.Response:
+            sent.update({k: str(v) for k, v in (await request.post()).items()})
+            return web.json_response({"data": UPID})
+
+        app.router.add_post(f"/api2/json/{path}", handler)
+
+        async with TestServer(app) as server, ProxmoxApi.from_token(str(server.make_url("")).rstrip("/"), TOKEN) as api:
+            yield api
+
+    async def test_shutdown_passes_its_timeout(self):
+        sent: dict[str, str] = {}
+        async with self.proxmox_recording("nodes/pve2/qemu/101/status/shutdown", sent) as api:
+            res = await api.shutdown_vm(101, "pve2", 120)
+
+        assert res
+        assert sent == {"timeout": "120"}
+
+    async def test_stop_overrules_a_running_shutdown(self):
+        sent: dict[str, str] = {}
+        async with self.proxmox_recording("nodes/pve2/qemu/101/status/stop", sent) as api:
+            res = await api.stop_vm(101, "pve2")
+
+        assert res
+        assert sent == {"overrule-shutdown": "1"}
+
+    async def test_download_iso_asks_proxmox_to_check_the_sha256(self):
+        sent: dict[str, str] = {}
+        async with self.proxmox_recording("nodes/pve2/storage/local/download-url", sent) as api:
+            res = await api.download_iso("pve2", "https://example.com/a.iso", "a.iso", "local", sha256="ab12")
+
+        assert res
+        assert sent["checksum"] == "ab12"
+        assert sent["checksum-algorithm"] == "sha256"
