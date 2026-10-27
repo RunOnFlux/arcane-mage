@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ssl
+
+import certifi
 import pytest
 
+from arcane_mage import helpers
 from arcane_mage.helpers import ExecBinaryError, exec_binary
 
 
@@ -36,3 +40,15 @@ class TestExecBinaryError:
     def test_str_representation(self):
         err = ExecBinaryError(["test", "cmd"], b"", b"failed")
         assert "test" in str(err)
+
+
+class TestSslFor:
+    def test_verification_uses_certifis_bundle(self):
+        context = helpers._ssl_for(None)
+
+        assert isinstance(context, ssl.SSLContext)
+        assert context.verify_mode == ssl.CERT_REQUIRED
+        assert context.get_ca_certs() == ssl.create_default_context(cafile=certifi.where()).get_ca_certs()
+
+    def test_verify_ssl_false_turns_verification_off(self):
+        assert helpers._ssl_for(False) is False

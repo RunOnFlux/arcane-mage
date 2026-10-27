@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import pwd
+import ssl
 from collections.abc import AsyncGenerator, Callable, Generator
 from itertools import count
 from json import JSONDecodeError
@@ -12,6 +13,7 @@ from socket import AF_INET
 from typing import Literal
 
 import aiofiles
+import certifi
 from aiohttp import (
     BasicAuth as _BasicAuth,
 )
@@ -29,6 +31,14 @@ from aiohttp import (
 from yarl import URL
 
 log = logging.getLogger(__name__)
+
+# Public endpoints are verified against certifi's CA bundle: the platform store differs
+# between Python installs, and some lack roots these endpoints chain to.
+_CA_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+def _ssl_for(verify_ssl: bool | None) -> ssl.SSLContext | bool:
+    return False if verify_ssl is False else _CA_CONTEXT
 
 
 class BasicAuth(_BasicAuth):
@@ -163,7 +173,7 @@ async def do_http(
                     auth=auth,
                     headers=headers,
                     json=data,
-                    ssl=verify_ssl,
+                    ssl=_ssl_for(verify_ssl),
                 ) as resp:
                     if resp.status in [429, 500, 502, 503, 504]:
                         log.debug("bad response: %s", resp.status)
@@ -222,14 +232,10 @@ async def do_http_iter(
     conn = TCPConnector(family=AF_INET)
 
     auth = None
-    ssl = None
 
     if credentials:
         # user password
         auth = BasicAuth(*credentials)
-
-    if verify_ssl is not None:
-        ssl = verify_ssl
 
     async with ClientSession(
         connector=conn,
@@ -248,7 +254,7 @@ async def do_http_iter(
                     auth=auth,
                     headers=headers,
                     json=data,
-                    ssl=ssl,
+                    ssl=_ssl_for(verify_ssl),
                 ) as resp:
                     resp: ClientResponse
 
@@ -309,7 +315,7 @@ async def do_http_to_file(
             return False
 
         try:
-            async with session.get(url, timeout=timeout) as resp:
+            async with session.get(url, timeout=timeout, ssl=_CA_CONTEXT) as resp:
                 resp: ClientResponse
 
                 if resp.status != 200:

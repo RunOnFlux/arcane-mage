@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- **TLS to public endpoints** (the release feed, the ISO checksums): verified against certifi's CA bundle, so it no longer depends on the Python install's certificate store. `certifi` is a new dependency.
+- `refresh-iso` says when it cannot reach the release feed.
 - **Task polling on a cluster**: `get_task` polls the node named in the UPID, which for an upload is the node that accepted the connection, not the target node.
 - **Slow creates**: the create task is waited on for up to 600 s and uploads for up to 120 s. A create that outlasted the old 10 s wait had its install images deleted while it was still running.
 - `wait_for_task` returns as soon as a task stops, so a failed task is reported at once.
