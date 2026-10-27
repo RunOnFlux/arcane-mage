@@ -5,7 +5,7 @@ Ansible collection for provisioning ArcaneOS FluxNodes on Proxmox hypervisors us
 ## Requirements
 
 - Python >= 3.13 on the Ansible controller
-- `arcane-mage >= 2.0.0` (`pip install arcane-mage`)
+- `arcane-mage >= 4.0.0` (`pip install arcane-mage`)
 - Proxmox VE >= 8.4.1
 - Proxmox API token with appropriate permissions
 
