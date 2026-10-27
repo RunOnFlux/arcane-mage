@@ -199,7 +199,7 @@ VM network configuration. Defaults to DHCP if omitted.
 |---|---|---|---|---|
 | `ip_allocation` | string | no | `dhcp` | `dhcp` or `static` |
 | `address_config` | object | if static | | Static IP configuration (see below) |
-| `vlan` | integer | no | | VLAN tag (1-4095) |
+| `vlan` | integer | no | | VLAN tag (1-4095). Leave unset when the bridge is an SDN VNet in a VLAN zone: the host applies the tag, and a second tag from the guest leaves the VM with no network |
 | `rate_limit` | integer | no | | Network rate limit. Must be 35, 75, 135, or 250 |
 
 **address_config** (required when `ip_allocation: static`):
