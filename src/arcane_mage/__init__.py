@@ -34,6 +34,7 @@ from .proxmox import (
     ResolvedConnection,
     StorageConfig,
     StorageVolume,
+    TaskOutcome,
     TaskStatus,
     VmSummary,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "StorageConfig",
     "StorageVolume",
     "SystemConfig",
+    "TaskOutcome",
     "TaskStatus",
     "VmSummary",
     "get_latest_iso_version",

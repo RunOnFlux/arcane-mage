@@ -31,6 +31,15 @@ class TestApiResponse:
         assert resp.timed_out
         assert bool(resp) is False
 
+    def test_reason_names_the_status_and_error(self):
+        assert ApiFailure(status=500, error="storage full").reason == "HTTP 500: storage full"
+
+    def test_reason_without_a_status_is_the_error(self):
+        assert ApiFailure(error="Connection Error").reason == "Connection Error"
+
+    def test_reason_for_a_timeout(self):
+        assert ApiFailure(timed_out=True).reason == "request timed out"
+
 
 TOKEN = ParsedToken("user@pam", "t", "v")
 
@@ -188,3 +197,38 @@ class TestGetNetworks:
 
         assert res
         assert res.payload == [{"iface": "flux50", "type": "vnet"}]
+
+
+UPID = "UPID:pve2:0000A1B2:00C3D4E5:671E0000:qmcreate:101:root@pam:"
+
+
+class TestWaitForTask:
+    async def test_polls_the_node_the_upid_names(self):
+        task = {"status": "stopped", "exitstatus": "OK"}
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 200, {"data": task})) as api:
+            outcome = await api.wait_for_task(UPID, "pve1")
+
+        assert outcome
+        assert outcome.error is None
+
+    async def test_a_failed_task_carries_its_exit_status(self):
+        why = "unable to create VM 101 - cannot import from 'local:import/arcane_efi.raw'"
+        task = {"status": "stopped", "exitstatus": why}
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 200, {"data": task})) as api:
+            outcome = await api.wait_for_task(UPID, "pve2", max_wait_s=600)
+
+        assert not outcome
+        assert outcome.error == why
+
+    async def test_a_task_that_outlasts_the_wait_says_so(self):
+        task = {"status": "running"}
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 200, {"data": task})) as api:
+            outcome = await api.wait_for_task(UPID, "pve2", max_wait_s=0)
+
+        assert outcome.error == "task still running after 0s"
+
+    async def test_an_unreadable_task_says_so(self):
+        async with proxmox_answering(("GET", "nodes/pve2/tasks/{upid}/status", 500, {"data": None})) as api:
+            outcome = await api.wait_for_task(UPID, "pve2")
+
+        assert outcome.error == "task status unreadable (HTTP 500: Internal Server Error)"

@@ -127,9 +127,9 @@ async def run_iso_info(params):
             return False, iso_name, False, f"Failed to initiate ISO download: status={res.status} error={res.error}"
 
         # Wait for download task
-        ok = await api.wait_for_task(res.payload, params["node"], max_wait_s=600)
-        if not ok:
-            return False, iso_name, False, "ISO download task did not complete in time"
+        outcome = await api.wait_for_task(res.payload, params["node"], max_wait_s=600)
+        if not outcome:
+            return False, iso_name, False, f"ISO download failed: {outcome.error}"
 
     return True, iso_name, True, ""
 
