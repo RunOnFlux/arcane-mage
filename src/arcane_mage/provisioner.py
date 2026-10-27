@@ -246,12 +246,9 @@ class Provisioner:
 
         return ApiSuccess(payload=ClusterStatus.from_entries(res.payload))
 
-    async def validate_cluster(
-        self, node: str, storage_import: str, vm_name: str | None = None
-    ) -> tuple[bool, str] | None:
+    async def validate_cluster(self, node: str, vm_name: str | None = None) -> tuple[bool, str] | None:
         """Cluster pre-flight for a VM on `node`: the cluster has quorum, `node` is online,
-        `storage_import` is reachable from the node uploads run on, and `vm_name` (when
-        given) is unused across the cluster. None on a standalone host.
+        and `vm_name` (when given) is unused across the cluster. None on a standalone host.
 
         A read that fails fails the check: a cluster this token cannot read is not
         a standalone host."""
@@ -275,23 +272,6 @@ class Provisioner:
 
         if not target or not target.online:
             return False, f"Node '{node}' is offline in cluster '{cluster.name}'"
-
-        # Uploads run on the node the connection reaches, so a target on another node
-        # can import only from storage that node shares with it.
-        if not target.local:
-            storage_res = await self.api.get_storage_config()
-
-            if not storage_res:
-                return False, f"Unable to read /storage ({storage_res.reason})"
-
-            shared = any(s["storage"] == storage_import and s.get("shared") for s in storage_res.payload)
-
-            if not shared:
-                uploader = cluster.local_node.name if cluster.local_node else "the node this connection reaches"
-                return False, (
-                    f"Import storage '{storage_import}' is not shared, and uploads run on '{uploader}', "
-                    f"not '{node}'. Use shared import storage, or connect to '{node}'"
-                )
 
         if vm_name is not None:
             vms_res = await self.api.get_cluster_vms()
@@ -763,7 +743,7 @@ class Provisioner:
             _cb(False, f"Node tier: {hv.node_tier} does not exist")
             return False
 
-        cluster_check = await self.validate_cluster(hv.node, hv.storage_import, hv.vm_name)
+        cluster_check = await self.validate_cluster(hv.node, hv.vm_name)
 
         if cluster_check is not None:
             cluster_ok, cluster_msg = cluster_check

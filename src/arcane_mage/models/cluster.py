@@ -40,7 +40,3 @@ class ClusterStatus:
 
     def node(self, name: str) -> ClusterNode | None:
         return next((n for n in self.nodes if n.name == name), None)
-
-    @property
-    def local_node(self) -> ClusterNode | None:
-        return next((n for n in self.nodes if n.local), None)

@@ -60,7 +60,8 @@ On a Proxmox cluster, every provision first checks, from the cluster's current s
 - the cluster has quorum
 - the target node is online
 - the VM name is not used anywhere in the cluster
-- the import storage is reachable: uploads run on the node the API connection reaches, so a VM on any other node needs `storage_import` to be shared storage
+
+The API connection can be to any member: Proxmox copies an upload to the target node's import storage.
 
 A token that cannot read `/cluster/status` (it needs `Sys.Audit`, which `PVEAdmin` includes) fails the check rather than being taken for a standalone host. To treat a cluster member as standalone, set `force_standalone: true` on its stored hypervisor in `~/.fluxnode_creator.yaml`, or pass `force_standalone: true` to the Ansible modules.
 

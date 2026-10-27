@@ -544,7 +544,7 @@ def validate(
 
                 checks: list[_Check] = []
 
-                cluster_check = await provisioner.validate_cluster(hyper.node, hyper.storage_import, hyper.vm_name)
+                cluster_check = await provisioner.validate_cluster(hyper.node, hyper.vm_name)
                 if cluster_check is not None:
                     cluster_ok, cluster_msg = cluster_check
                     checks.append({"check": "cluster", "ok": cluster_ok, "message": cluster_msg})

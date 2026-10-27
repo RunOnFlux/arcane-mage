@@ -13,9 +13,8 @@ description:
   - Uses the arcane-mage library to handle EFI disk, config disk, TPM 2.0, and VM creation.
   - The VM is fully configured for unattended ArcaneOS installation.
   - Idempotent — skips provisioning if a VM with the same name already exists.
-  - On a cluster, refuses when the cluster has lost quorum, the node is offline, the
-    import storage is not reachable from the node uploads run on, or the VM name is taken
-    on another node.
+  - On a cluster, refuses when the cluster has lost quorum, the node is offline, or the
+    VM name is taken on another node.
 options:
   api_url:
     description: Proxmox API URL (e.g., https://192.168.1.100:8006).

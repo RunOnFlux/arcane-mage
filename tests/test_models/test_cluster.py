@@ -21,6 +21,5 @@ class TestClusterStatus:
             quorate=True,
             nodes=(ClusterNode("pve1", online=True, local=True), ClusterNode("pve2", online=False, local=False)),
         )
-        assert status.local_node == ClusterNode("pve1", online=True, local=True)
         assert status.node("pve2") == ClusterNode("pve2", online=False, local=False)
         assert status.node("pve9") is None

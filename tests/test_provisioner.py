@@ -583,7 +583,7 @@ class TestRefreshIso:
 
 
 def cluster_status(*, quorate: int = 1, pve2_online: int = 1) -> list[dict[str, object]]:
-    """/cluster/status for cluster "lab": pve1 (the node the connection reaches) and pve2."""
+    """/cluster/status for cluster "lab", members pve1 and pve2."""
     return [
         {"type": "cluster", "name": "lab", "quorate": quorate},
         {"type": "node", "name": "pve1", "online": 1, "local": 1},
@@ -596,9 +596,6 @@ class TestValidateCluster:
     def mock_api(self) -> AsyncMock:
         api = AsyncMock()
         api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status())
-        api.get_storage_config.return_value = ApiSuccess(
-            payload=[{"storage": "local", "type": "dir"}, {"storage": "nfs", "type": "nfs", "shared": 1}]
-        )
         api.get_cluster_vms.return_value = ApiSuccess(payload=[{"vmid": 101, "node": "pve2", "name": "node-a"}])
         return api
 
@@ -609,18 +606,18 @@ class TestValidateCluster:
     async def test_a_standalone_host_has_no_cluster_checks(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_cluster_status.return_value = ApiSuccess(payload=[{"type": "node", "name": "pve1", "local": 1}])
 
-        assert await provisioner.validate_cluster("pve1", "local", "node-b") is None
+        assert await provisioner.validate_cluster("pve1", "node-b") is None
 
     async def test_force_standalone_reads_nothing(self, mock_api: AsyncMock):
         provisioner = Provisioner(api=mock_api, force_standalone=True)
 
-        assert await provisioner.validate_cluster("pve1", "local", "node-b") is None
+        assert await provisioner.validate_cluster("pve1", "node-b") is None
         mock_api.get_cluster_status.assert_not_awaited()
 
     async def test_an_unreadable_status_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_cluster_status.return_value = ApiFailure(status=403, error="Permission check failed")
 
-        check = await provisioner.validate_cluster("pve1", "local", "node-b")
+        check = await provisioner.validate_cluster("pve1", "node-b")
 
         assert check is not None
         ok, msg = check
@@ -630,46 +627,27 @@ class TestValidateCluster:
     async def test_a_cluster_without_quorum_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status(quorate=0))
 
-        assert await provisioner.validate_cluster("pve1", "local", "node-b") == (False, "Cluster 'lab' has lost quorum")
+        assert await provisioner.validate_cluster("pve1", "node-b") == (False, "Cluster 'lab' has lost quorum")
 
     async def test_an_offline_node_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status(pve2_online=0))
 
-        assert await provisioner.validate_cluster("pve2", "nfs", "node-b") == (
+        assert await provisioner.validate_cluster("pve2", "node-b") == (
             False,
             "Node 'pve2' is offline in cluster 'lab'",
         )
 
     async def test_an_unknown_node_fails(self, provisioner: Provisioner):
-        assert await provisioner.validate_cluster("pve9", "nfs", "node-b") == (
+        assert await provisioner.validate_cluster("pve9", "node-b") == (
             False,
             "Node 'pve9' is offline in cluster 'lab'",
         )
 
-    async def test_the_local_node_passes_without_reading_storage(self, provisioner: Provisioner, mock_api: AsyncMock):
-        assert await provisioner.validate_cluster("pve1", "local", "node-b") == (True, "Cluster 'lab' validated")
-        mock_api.get_storage_config.assert_not_awaited()
-
-    async def test_another_node_with_local_import_storage_fails(self, provisioner: Provisioner):
-        assert await provisioner.validate_cluster("pve2", "local", "node-b") == (
-            False,
-            "Import storage 'local' is not shared, and uploads run on 'pve1', not 'pve2'. "
-            "Use shared import storage, or connect to 'pve2'",
-        )
-
-    async def test_another_node_with_shared_import_storage_passes(self, provisioner: Provisioner):
-        assert await provisioner.validate_cluster("pve2", "nfs", "node-b") == (True, "Cluster 'lab' validated")
-
-    async def test_an_unreadable_storage_config_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
-        mock_api.get_storage_config.return_value = ApiFailure(status=403, error="Permission check failed")
-
-        assert await provisioner.validate_cluster("pve2", "nfs", "node-b") == (
-            False,
-            "Unable to read /storage (HTTP 403: Permission check failed)",
-        )
+    async def test_another_online_node_passes(self, provisioner: Provisioner):
+        assert await provisioner.validate_cluster("pve2", "node-b") == (True, "Cluster 'lab' validated")
 
     async def test_a_name_taken_on_another_node_fails(self, provisioner: Provisioner):
-        assert await provisioner.validate_cluster("pve1", "local", "node-a") == (
+        assert await provisioner.validate_cluster("pve1", "node-a") == (
             False,
             "VM name 'node-a' is taken by VM 101 on 'pve2'",
         )
@@ -677,11 +655,11 @@ class TestValidateCluster:
     async def test_an_unreadable_vm_list_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_cluster_vms.return_value = ApiFailure(timed_out=True)
 
-        assert await provisioner.validate_cluster("pve1", "local", "node-b") == (
+        assert await provisioner.validate_cluster("pve1", "node-b") == (
             False,
             "Unable to list the cluster's VMs (request timed out)",
         )
 
     async def test_no_vm_name_skips_the_name_check(self, provisioner: Provisioner, mock_api: AsyncMock):
-        assert await provisioner.validate_cluster("pve1", "local") == (True, "Cluster 'lab' validated")
+        assert await provisioner.validate_cluster("pve1") == (True, "Cluster 'lab' validated")
         mock_api.get_cluster_vms.assert_not_awaited()
