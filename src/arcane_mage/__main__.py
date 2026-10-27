@@ -142,7 +142,7 @@ def _resolve_hypervisor(hypervisor: str) -> ResolvedConnection:
     if not parsed:
         raise CliError(f"Invalid token for '{hypervisor}'. Expected: user@pam!tokenname=tokenvalue")
 
-    return ResolvedConnection(match.url, parsed)
+    return ResolvedConnection(match.url, parsed, force_standalone=match.force_standalone)
 
 
 def _resolve_connection(
@@ -237,7 +237,7 @@ def provision(
 
     async def run():
         async with ProxmoxApi.from_token(conn.url, conn.token) as api:
-            provisioner = Provisioner(api)
+            provisioner = Provisioner(api, force_standalone=conn.force_standalone)
 
             nodes = list(configs)
             if node_filter:
@@ -335,7 +335,7 @@ def deprovision(
 
         async def run_direct():
             async with ProxmoxApi.from_token(conn.url, conn.token) as api:
-                provisioner = Provisioner(api)
+                provisioner = Provisioner(api, force_standalone=conn.force_standalone)
 
                 res = await api.get_hypervisor_nodes()
                 if not res:
@@ -441,7 +441,7 @@ def deprovision(
 
     async def run():
         async with ProxmoxApi.from_token(conn.url, conn.token) as api:
-            provisioner = Provisioner(api)
+            provisioner = Provisioner(api, force_standalone=conn.force_standalone)
 
             results = []
             all_ok = True
@@ -510,7 +510,7 @@ def validate(
 
     async def run():
         async with ProxmoxApi.from_token(conn.url, conn.token) as api:
-            provisioner = Provisioner(api)
+            provisioner = Provisioner(api, force_standalone=conn.force_standalone)
 
             nodes = list(configs)
             if node_filter:
@@ -543,6 +543,11 @@ def validate(
                     continue
 
                 checks: list[_Check] = []
+
+                cluster_check = await provisioner.validate_cluster(hyper.node, hyper.storage_import, hyper.vm_name)
+                if cluster_check is not None:
+                    cluster_ok, cluster_msg = cluster_check
+                    checks.append({"check": "cluster", "ok": cluster_ok, "message": cluster_msg})
 
                 api_ok, api_msg = await provisioner.validate_api_version(hyper.node)
                 checks.append(
@@ -753,7 +758,7 @@ def status(
 
     async def run():
         async with ProxmoxApi.from_token(conn.url, conn.token) as api:
-            provisioner = Provisioner(api)
+            provisioner = Provisioner(api, force_standalone=conn.force_standalone)
 
             discovery = await provisioner.discover_nodes(configs)
             if not discovery:

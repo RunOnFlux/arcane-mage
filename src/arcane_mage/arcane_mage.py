@@ -77,15 +77,17 @@ class ArcaneMage(App):
         if not fluxnode or not fluxnode.hypervisor:
             return None
 
+        screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
+
         vm_name = fluxnode.hypervisor.vm_name
         total_steps = 9 if fluxnode.hypervisor.start_on_creation else 8
+        total_steps += screen.cluster_step
         info_screen = ProvisioningInfoScreen(vm_name=vm_name, total_steps=total_steps)
 
         # this is a bit rugged
         mounted = self.push_screen(info_screen)
         await mounted
 
-        screen = self.get_screen("welcome-proxmox", WelcomeScreenProxmox)
         worker = screen.provision_node(fluxnode, callback=info_screen.update_callback)
 
         return worker

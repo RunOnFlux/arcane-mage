@@ -13,6 +13,9 @@ description:
   - Uses the arcane-mage library to handle EFI disk, config disk, TPM 2.0, and VM creation.
   - The VM is fully configured for unattended ArcaneOS installation.
   - Idempotent — skips provisioning if a VM with the same name already exists.
+  - On a cluster, refuses when the cluster has lost quorum, the node is offline, the
+    import storage is not reachable from the node uploads run on, or the VM name is taken
+    on another node.
 options:
   api_url:
     description: Proxmox API URL (e.g., https://192.168.1.100:8006).
@@ -91,6 +94,12 @@ options:
   network_limit:
     description: Network rate limit in MB/s.
     type: int
+  force_standalone:
+    description: >
+      Skip cluster detection and the cluster checks, for a cluster member that is to be
+      treated as standalone.
+    type: bool
+    default: false
   hostname:
     description: System hostname for the ArcaneOS installation.
     required: true
@@ -399,7 +408,7 @@ async def run_provision(params):
             if existing:
                 return True, existing.get("vmid"), [f"VM '{params['vm_name']}' already exists (id={existing['vmid']})"]
 
-        provisioner = Provisioner(api)
+        provisioner = Provisioner(api, force_standalone=params["force_standalone"])
         success = await provisioner.provision_node(config, callback=callback)
 
         if success and config.hypervisor:
@@ -438,6 +447,7 @@ def main():
         memory_mb=dict(type="int"),
         cpu_limit=dict(type="float"),
         network_limit=dict(type="int"),
+        force_standalone=dict(type="bool", default=False),
         hostname=dict(type="str", required=True),
         console_password=dict(type="str", no_log=True),
         ssh_pubkey=dict(type="str"),

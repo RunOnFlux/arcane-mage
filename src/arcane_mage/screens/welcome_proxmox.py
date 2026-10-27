@@ -22,9 +22,9 @@ from textual.widgets import (
 )
 
 from ..messages import UpdateDefaultPage
-from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
+from ..models import ArcaneOsConfig, ArcaneOsConfigGroup, ClusterStatus, HypervisorConfig
 from ..provisioner import Provisioner, get_latest_iso_version
-from ..proxmox import VmSummary
+from ..proxmox import ApiResponse, VmSummary
 
 
 class WelcomeScreenProxmox(Screen):
@@ -57,6 +57,8 @@ class WelcomeScreenProxmox(Screen):
     display_table = var(False)
 
     provisioner: Provisioner
+    # Whether provisioning on this hypervisor runs the cluster pre-flight step.
+    cluster_step: bool = False
 
     def __init__(
         self,
@@ -111,6 +113,7 @@ class WelcomeScreenProxmox(Screen):
             return
 
         self.provisioner = provisioner
+        self.show_cluster(await provisioner.read_cluster())
 
         discovery = await provisioner.discover_nodes(self.fluxnodes)
 
@@ -122,6 +125,22 @@ class WelcomeScreenProxmox(Screen):
 
         self.build_fluxnode_table(discovery.nodes, discovery.provisioned_vms)
         self.hypervisor_populated = True
+
+    def show_cluster(self, res: ApiResponse[ClusterStatus | None]) -> None:
+        label = self.query_one("#cluster-info", Label)
+
+        if not res:
+            label.update(f"Cluster: unknown ({res.reason})")
+        elif res.payload is None:
+            label.update("")
+        else:
+            cluster = res.payload
+            online = sum(n.online for n in cluster.nodes)
+            quorum = "ok" if cluster.quorate else "LOST"
+            label.update(f"Cluster: {cluster.name} | Nodes online: {online}/{len(cluster.nodes)} | Quorum: {quorum}")
+
+        label.display = not (res and res.payload is None)
+        self.cluster_step = label.display
 
     def build_fluxnode_table(
         self, fluxnodes: ArcaneOsConfigGroup, provisioned_nodes: dict[str, list[VmSummary]]
@@ -187,6 +206,9 @@ class WelcomeScreenProxmox(Screen):
                     )
                     yield Button("X", id="exit", classes="icon-button", tooltip="Exit")
             yield Rule()
+            cluster_info = Label("", id="cluster-info")
+            cluster_info.display = False
+            yield cluster_info
             with Vertical():
                 yield first_time_dialog
                 with Vertical(id="dt-container"):

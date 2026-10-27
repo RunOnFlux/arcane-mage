@@ -53,6 +53,17 @@ Setting a startup config for a node (e.g. `startup_config: order=4,up=360`) requ
 2. Assign it on the `/` path
 3. Give this role to **BOTH** the API user and token
 
+## Clusters
+
+On a Proxmox cluster, every provision first checks, from the cluster's current state:
+
+- the cluster has quorum
+- the target node is online
+- the VM name is not used anywhere in the cluster
+- the import storage is reachable: uploads run on the node the API connection reaches, so a VM on any other node needs `storage_import` to be shared storage
+
+A token that cannot read `/cluster/status` (it needs `Sys.Audit`, which `PVEAdmin` includes) fails the check rather than being taken for a standalone host. To treat a cluster member as standalone, set `force_standalone: true` on its stored hypervisor in `~/.fluxnode_creator.yaml`, or pass `force_standalone: true` to the Ansible modules.
+
 ## Verifying Your Setup
 
 Once configured, verify connectivity with:

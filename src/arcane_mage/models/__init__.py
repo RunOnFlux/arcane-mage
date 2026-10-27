@@ -1,3 +1,5 @@
+from .cluster import ClusterNode as ClusterNode
+from .cluster import ClusterStatus as ClusterStatus
 from .config import ArcaneOsConfig as ArcaneOsConfig
 from .config import ArcaneOsConfigGroup as ArcaneOsConfigGroup
 from .delegate import Delegate as Delegate
@@ -29,6 +31,8 @@ __all__ = [
     "ArcaneCreatorConfig",
     "ArcaneOsConfig",
     "ArcaneOsConfigGroup",
+    "ClusterNode",
+    "ClusterStatus",
     "Delegate",
     "DiscordNotification",
     "FluxnodeConfig",

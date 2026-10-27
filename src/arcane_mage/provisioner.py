@@ -14,8 +14,8 @@ from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 
 from .fat_writer import FAT12Writer
 from .helpers import do_http, do_http_to_file
-from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
-from .proxmox import ApiResponse, HypervisorNode, ProxmoxApi, TaskOutcome, VmSummary
+from .models import ArcaneOsConfig, ArcaneOsConfigGroup, ClusterStatus, HypervisorConfig
+from .proxmox import ApiResponse, ApiSuccess, HypervisorNode, ProxmoxApi, TaskOutcome, VmSummary
 
 log = logging.getLogger(__name__)
 
@@ -181,8 +181,9 @@ class HypervisorDiscovery:
 class Provisioner:
     """Orchestrates Proxmox VM provisioning for Fluxnodes."""
 
-    def __init__(self, api: ProxmoxApi) -> None:
+    def __init__(self, api: ProxmoxApi, *, force_standalone: bool = False) -> None:
         self.api = api
+        self.force_standalone = force_standalone
 
     @classmethod
     async def from_hypervisor_config(cls, config: HypervisorConfig) -> Self | None:
@@ -204,7 +205,7 @@ class Provisioner:
         if not api:
             return None
 
-        return cls(api)
+        return cls(api, force_standalone=config.force_standalone)
 
     async def discover_nodes(self, all_configs: ArcaneOsConfigGroup) -> HypervisorDiscovery | None:
         """Discover hypervisor nodes and match against known configurations.
@@ -231,6 +232,79 @@ class Provisioner:
         await asyncio.gather(*(handle_node(n) for n in hyper_nodes.payload))
 
         return HypervisorDiscovery(nodes=useable_nodes, provisioned_vms=provisioned)
+
+    async def read_cluster(self) -> ApiResponse[ClusterStatus | None]:
+        """The cluster this host belongs to: None for a standalone host, and always None
+        with `force_standalone`."""
+        if self.force_standalone:
+            return ApiSuccess(payload=None)
+
+        res = await self.api.get_cluster_status()
+
+        if not res:
+            return res
+
+        return ApiSuccess(payload=ClusterStatus.from_entries(res.payload))
+
+    async def validate_cluster(
+        self, node: str, storage_import: str, vm_name: str | None = None
+    ) -> tuple[bool, str] | None:
+        """Cluster pre-flight for a VM on `node`: the cluster has quorum, `node` is online,
+        `storage_import` is reachable from the node uploads run on, and `vm_name` (when
+        given) is unused across the cluster. None on a standalone host.
+
+        A read that fails fails the check: a cluster this token cannot read is not
+        a standalone host."""
+        res = await self.read_cluster()
+
+        if not res:
+            return False, (
+                f"Unable to read /cluster/status ({res.reason}), so cluster membership is unknown. "
+                "Grant the token Sys.Audit, or set force_standalone if this host is standalone"
+            )
+
+        cluster = res.payload
+
+        if cluster is None:
+            return None
+
+        if not cluster.quorate:
+            return False, f"Cluster '{cluster.name}' has lost quorum"
+
+        target = cluster.node(node)
+
+        if not target or not target.online:
+            return False, f"Node '{node}' is offline in cluster '{cluster.name}'"
+
+        # Uploads run on the node the connection reaches, so a target on another node
+        # can import only from storage that node shares with it.
+        if not target.local:
+            storage_res = await self.api.get_storage_config()
+
+            if not storage_res:
+                return False, f"Unable to read /storage ({storage_res.reason})"
+
+            shared = any(s["storage"] == storage_import and s.get("shared") for s in storage_res.payload)
+
+            if not shared:
+                uploader = cluster.local_node.name if cluster.local_node else "the node this connection reaches"
+                return False, (
+                    f"Import storage '{storage_import}' is not shared, and uploads run on '{uploader}', "
+                    f"not '{node}'. Use shared import storage, or connect to '{node}'"
+                )
+
+        if vm_name is not None:
+            vms_res = await self.api.get_cluster_vms()
+
+            if not vms_res:
+                return False, f"Unable to list the cluster's VMs ({vms_res.reason})"
+
+            duplicate = next((vm for vm in vms_res.payload if vm.get("name") == vm_name), None)
+
+            if duplicate:
+                return False, f"VM name '{vm_name}' is taken by VM {duplicate['vmid']} on '{duplicate['node']}'"
+
+        return True, f"Cluster '{cluster.name}' validated"
 
     async def validate_api_version(self, node: str) -> tuple[bool, str]:
         """Validate that the Proxmox API version meets minimum requirements."""
@@ -688,6 +762,15 @@ class Provisioner:
         if hv.node_tier not in TIER_CONFIG:
             _cb(False, f"Node tier: {hv.node_tier} does not exist")
             return False
+
+        cluster_check = await self.validate_cluster(hv.node, hv.storage_import, hv.vm_name)
+
+        if cluster_check is not None:
+            cluster_ok, cluster_msg = cluster_check
+            _cb(cluster_ok, cluster_msg)
+
+            if not cluster_ok:
+                return False
 
         version_valid, version_error = await self.validate_api_version(hv.node)
 

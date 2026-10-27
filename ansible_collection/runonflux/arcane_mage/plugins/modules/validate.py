@@ -11,6 +11,8 @@ version_added: "1.0.0"
 description:
   - Validates that a Proxmox hypervisor is ready for FluxNode provisioning.
   - Checks API version, storage backends, ISO availability, and network bridge.
+  - On a cluster, also checks quorum, that the node is online, that the import storage
+    is reachable from the node uploads run on, and that I(vm_name) is unused.
   - Does not make any changes.
 options:
   api_url:
@@ -50,6 +52,15 @@ options:
     description: Storage backend for temporary imports.
     type: str
     default: local
+  vm_name:
+    description: VM name to check is unused across the cluster.
+    type: str
+  force_standalone:
+    description: >
+      Skip cluster detection and the cluster checks, for a cluster member that is to be
+      treated as standalone.
+    type: bool
+    default: false
 requirements:
   - "python >= 3.13"
   - "arcane-mage >= 2.0.0"
@@ -78,6 +89,9 @@ checks:
   type: dict
   returned: always
   contains:
+    cluster:
+      description: Whether the cluster checks passed. Absent on a standalone host.
+      type: bool
     api_version:
       description: Whether API version meets minimum.
       type: bool
@@ -112,7 +126,14 @@ async def run_validate(params):
     api_version = ""
 
     async with api:
-        provisioner = Provisioner(api)
+        provisioner = Provisioner(api, force_standalone=params["force_standalone"])
+
+        cluster_check = await provisioner.validate_cluster(params["node"], params["storage_import"], params["vm_name"])
+        if cluster_check is not None:
+            cluster_ok, cluster_msg = cluster_check
+            checks["cluster"] = cluster_ok
+            if not cluster_ok:
+                errors.append(f"Cluster: {cluster_msg}")
 
         # API version
         version_ok, version_msg = await provisioner.validate_api_version(params["node"])
@@ -162,6 +183,8 @@ def main():
         storage_images=dict(type="str", default="local-lvm"),
         storage_iso=dict(type="str", default="local"),
         storage_import=dict(type="str", default="local"),
+        vm_name=dict(type="str"),
+        force_standalone=dict(type="bool", default=False),
     )
 
     module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
