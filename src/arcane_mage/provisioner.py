@@ -305,6 +305,9 @@ class Provisioner:
         already. The node downloads it, and checks it against the release's sha256 sums."""
         feed = await do_http(_RELEASE_FEED, total_timeout=10)
 
+        if feed is None:
+            return IsoRefreshResult(error=f"Unable to fetch {_RELEASE_FEED}")
+
         try:
             release = _ARCANE_RELEASE.validate_python(feed)
         except ValidationError:
