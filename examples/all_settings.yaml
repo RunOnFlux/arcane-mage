@@ -13,7 +13,10 @@ nodes:
       vm_name: mynode # required
       vm_id: 107 # optional. Will use next available id if not present
       node_tier: stratus # required
+      tags: flux;stratus # optional
+      description: Fluxnode mynode # optional
       disk_limit: 200 # optional
+      memory_mb: 65536 # optional. Overrides the tier's memory
       cpu_limit: 0.8 # optional
       network_limit: 18 # optional
     installer: # optional

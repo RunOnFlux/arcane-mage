@@ -167,7 +167,11 @@ class Hypervisor:
     storage_import: str = "local"
     vm_id: int | None = None
     startup_config: str | None = None
+    tags: str | None = None
+    description: str | None = None
     disk_limit: int | None = None
+    # Overrides the tier's RAM.
+    memory_mb: int | None = Field(default=None, gt=0)
     cpu_limit: float | None = None
     network_limit: int | None = None
     start_on_creation: bool = False

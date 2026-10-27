@@ -70,6 +70,8 @@ class VmConfig:
     vga: str
     serial0: str
     startup: str | None = None
+    tags: str | None = None
+    description: str | None = None
 
     def to_proxmox_dict(self) -> dict:
         """Convert to the dict format Proxmox API expects."""
@@ -502,7 +504,10 @@ class Provisioner:
         vm_id: int | None = None,
         iso_name: str | None = None,
         startup_config: str | None = None,
+        tags: str | None = None,
+        description: str | None = None,
         disk_limit: int | None = None,
+        memory_mb: int | None = None,
         cpu_limit: float | None = None,
         network_limit: int | None = None,
     ) -> VmConfig | None:
@@ -542,7 +547,7 @@ class Provisioner:
             smbios1=f"uuid={smbios_uuid}",
             boot="order=scsi0;ide2;net0",
             numa=0,
-            memory=tier_config["memory_mb"],
+            memory=memory_mb or tier_config["memory_mb"],
             tpmstate0=f"{storage_images}:4,version=v2.0",
             cores=tier_config["cpu_cores"],
             cpulimit=cpu_limit,
@@ -558,6 +563,8 @@ class Provisioner:
             vga="std,clipboard=vnc",
             serial0="socket",
             startup=startup_config,
+            tags=tags,
+            description=description,
         )
 
     async def provision_node(
@@ -632,9 +639,12 @@ class Provisioner:
             storage_import=hv.storage_import,
             iso_name=hv.iso_name,
             disk_limit=hv.disk_limit,
+            memory_mb=hv.memory_mb,
             cpu_limit=hv.cpu_limit,
             network_limit=hv.network_limit,
             startup_config=hv.startup_config,
+            tags=hv.tags,
+            description=hv.description,
         )
 
         if not vm_config:

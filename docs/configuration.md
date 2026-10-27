@@ -63,7 +63,10 @@ Controls where and how the VM is created on Proxmox.
 | `vm_id` | integer | no | next available | Explicit VM ID |
 | `start_on_creation` | boolean | no | `false` | Start the VM after creation |
 | `startup_config` | string | no | | Proxmox startup order (e.g. `order=4,up=360`). Requires `Sys.Modify` permission |
+| `tags` | string | no | | Proxmox tags, separated by `;` (e.g. `flux;cumulus`) |
+| `description` | string | no | | Proxmox VM notes |
 | `disk_limit` | integer | no | | Disk I/O limit in MB/s |
+| `memory_mb` | integer | no | tier's memory | VM memory in MiB, overriding the tier's |
 | `cpu_limit` | float | no | | CPU limit (0.0-1.0) |
 | `network_limit` | integer | no | | Network rate limit in MB/s |
 

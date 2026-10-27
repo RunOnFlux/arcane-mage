@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **VM tags, notes and memory**: the hypervisor config takes `tags` and `description`, set on the VM when it is created, and `memory_mb`, which overrides the tier's memory. The Ansible `provision` module takes all three.
+
 ### Changed
 
 - **Task outcomes**: `ProxmoxApi.wait_for_task` returns a `TaskOutcome`, truthy when the task ended OK, with Proxmox's exit status in `error` when it did not. `Provisioner.create_vm`, `start_vm`, `stop_vm`, `delete_vm`, `upload_arcane_config` and `upload_arcane_efi` return it too. `ApiFailure.reason` gives a failure in one line.

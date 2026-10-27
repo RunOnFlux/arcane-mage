@@ -140,6 +140,12 @@ class TestHypervisor:
         with pytest.raises(ValidationError):
             Hypervisor(**hypervisor_dict)
 
+    def test_memory_mb_must_be_positive(self, hypervisor_dict: dict):
+        hypervisor_dict["memory_mb"] = 0
+
+        with pytest.raises(ValidationError):
+            Hypervisor(**hypervisor_dict)
+
     def test_to_dict_roundtrip(self, hypervisor_dict: dict):
         hyper = Hypervisor(**hypervisor_dict)
         result = hyper.to_dict()
@@ -157,6 +163,9 @@ class TestHypervisor:
         hypervisor_dict["cpu_limit"] = 2.0
         hypervisor_dict["network_limit"] = 100
         hypervisor_dict["start_on_creation"] = True
+        hypervisor_dict["tags"] = "flux;cumulus"
+        hypervisor_dict["description"] = "# node-a\nkind: paid"
+        hypervisor_dict["memory_mb"] = 7680
 
         hyper = Hypervisor(**hypervisor_dict)
 
@@ -166,3 +175,6 @@ class TestHypervisor:
         assert hyper.cpu_limit == 2.0
         assert hyper.network_limit == 100
         assert hyper.start_on_creation is True
+        assert hyper.tags == "flux;cumulus"
+        assert hyper.description == "# node-a\nkind: paid"
+        assert hyper.memory_mb == 7680

@@ -191,6 +191,38 @@ class TestProvisionerValidation:
         assert api["vga"] == "std,clipboard=vnc"
         assert api["serial0"] == "socket"
 
+    async def test_create_vm_config_tags_description_and_memory(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=100)
+        description = "# node-a\nkind: paid"
+
+        config = await provisioner.create_vm_config(
+            vm_name="test-vm",
+            tier="cumulus",
+            network_bridge="vmbr0",
+            tags="flux;cumulus",
+            description=description,
+            memory_mb=7680,
+        )
+
+        assert config is not None
+        api = config.to_proxmox_dict()
+        assert api["tags"] == "flux;cumulus"
+        assert api["description"] == description
+        assert api["memory"] == 7680
+
+    async def test_create_vm_config_leaves_out_unset_tags_and_description(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=100)
+
+        config = await provisioner.create_vm_config(vm_name="test-vm", tier="cumulus", network_bridge="vmbr0")
+
+        assert config is not None
+        api = config.to_proxmox_dict()
+        assert "tags" not in api
+        assert "description" not in api
+        assert api["memory"] == TIER_CONFIG["cumulus"]["memory_mb"]
+
     async def test_a_vm_imports_its_own_efi_image(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_next_id.return_value = ApiSuccess(payload=100)
 
@@ -376,7 +408,8 @@ class TestProvisionFailureReasons:
         hv.node, hv.vm_name, hv.vm_id, hv.node_tier = "pve1", "node-a", 264, "cumulus"
         hv.network, hv.iso_name = "vmbr0", "FluxLive.iso"
         hv.storage_images, hv.storage_iso, hv.storage_import = "local-lvm", "local", "local"
-        hv.disk_limit = hv.cpu_limit = hv.network_limit = hv.startup_config = None
+        hv.disk_limit = hv.memory_mb = hv.cpu_limit = hv.network_limit = None
+        hv.startup_config = hv.tags = hv.description = None
         hv.start_on_creation = True
         return node
 
