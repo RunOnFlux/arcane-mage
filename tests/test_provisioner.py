@@ -185,6 +185,14 @@ class TestProvisionerValidation:
         assert api["vga"] == "std,clipboard=vnc"
         assert api["serial0"] == "socket"
 
+    async def test_a_vm_imports_its_own_efi_image(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=100)
+
+        config = await provisioner.create_vm_config(vm_name="test-vm", tier="cumulus", network_bridge="vmbr0")
+
+        assert config is not None
+        assert config.efidisk0.endswith("import-from=local:import/100_arcane_efi.raw")
+
     async def test_create_vm_config_invalid_tier(self, provisioner: Provisioner, mock_api: AsyncMock):
         config = await provisioner.create_vm_config(
             vm_name="test-vm",
@@ -316,6 +324,7 @@ class TestProvisionFailureReasons:
         api = AsyncMock()
         api.upload_file.return_value = ApiSuccess(payload="UPID:up")
         api.create_vm.return_value = ApiSuccess(payload="UPID:create")
+        api.start_vm.return_value = ApiSuccess(payload="UPID:start")
         api.delete_file.return_value = ApiSuccess(payload="UPID:del")
         api.wait_for_task.return_value = TaskOutcome()
         return api
@@ -348,7 +357,7 @@ class TestProvisionFailureReasons:
         return failed
 
     async def test_a_failed_create_carries_the_task_error(self, provisioner: Provisioner, mock_api: AsyncMock):
-        why = "unable to create VM 264 - cannot import from 'local:import/arcane_efi.raw'"
+        why = "unable to create VM 264 - cannot import from 'local:import/264_arcane_efi.raw'"
 
         async def wait(task: str, node: str, max_wait_s: int = 10) -> TaskOutcome:
             return TaskOutcome(error=why) if task == "UPID:create" else TaskOutcome()
@@ -383,3 +392,10 @@ class TestProvisionFailureReasons:
             "Unable to upload Config image to hypervisor: task status unreadable (request timed out)"
         ]
         assert [c.args[0] for c in mock_api.delete_file.call_args_list] == ["264_arcane_config.raw"]
+
+    async def test_a_run_uploads_and_deletes_only_its_own_images(self, provisioner: Provisioner, mock_api: AsyncMock):
+        assert await provisioner.provision_node(self.fluxnode())
+
+        assert mock_api.upload_file.call_args_list[1].kwargs["file_name"] == "264_arcane_efi.raw"
+        deleted = sorted(c.args[0] for c in mock_api.delete_file.call_args_list)
+        assert deleted == ["264_arcane_config.raw", "264_arcane_efi.raw"]

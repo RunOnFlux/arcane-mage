@@ -301,9 +301,8 @@ class WelcomeScreenProxmox(Screen):
         self,
         fluxnode: ArcaneOsConfig,
         callback: Callable[[bool, str], None],
-        delete_efi: bool = True,
     ) -> bool:
-        result = await self.provisioner.provision_node(fluxnode, callback, delete_efi)
+        result = await self.provisioner.provision_node(fluxnode, callback)
 
         # Update UI after successful provisioning
         if result and fluxnode.hypervisor:

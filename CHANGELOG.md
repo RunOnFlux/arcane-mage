@@ -5,6 +5,7 @@
 ### Changed
 
 - **Task outcomes**: `ProxmoxApi.wait_for_task` returns a `TaskOutcome`, truthy when the task ended OK, with Proxmox's exit status in `error` when it did not. `Provisioner.create_vm`, `start_vm`, `stop_vm`, `delete_vm`, `upload_arcane_config` and `upload_arcane_efi` return it too. `ApiFailure.reason` gives a failure in one line.
+- **Per-VM EFI images**: each VM uploads, imports and deletes its own `<vmid>_arcane_efi.raw`. `Provisioner.provision_node` no longer takes `delete_efi`, and `upload_arcane_efi` takes the VM id.
 - A failed provisioning or teardown step carries the reason: "Unable to create VM on hypervisor: unable to create VM 264 - cannot import from …".
 
 ### Fixed
@@ -13,6 +14,7 @@
 - **Slow creates**: the create task is waited on for up to 600 s and uploads for up to 120 s. A create that outlasted the old 10 s wait had its install images deleted while it was still running.
 - `wait_for_task` returns as soon as a task stops, so a failed task is reported at once.
 - A failed config or EFI upload deletes the files it uploaded.
+- Two provisioning runs sharing an import storage no longer delete each other's EFI image mid-create, and the TUI no longer leaves the shared EFI image behind on every hypervisor but the last node's.
 
 ## 3.2.1
 

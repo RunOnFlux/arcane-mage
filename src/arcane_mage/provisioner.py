@@ -101,6 +101,12 @@ def _get_vm_config_file_name(vm_id: int) -> str:
     return f"{vm_id}_{_config_image_base}.raw"
 
 
+# Each VM imports its own EFI image, so runs that share an import storage never delete
+# an image another run is still importing.
+def _get_vm_efi_file_name(vm_id: int) -> str:
+    return f"{vm_id}_arcane_efi.raw"
+
+
 async def get_latest_iso_version() -> str | None:
     """Fetch the latest FluxOS ISO version from the release API."""
     res = await do_http("https://images.runonflux.io/api/latest_release", total_timeout=3)
@@ -412,9 +418,9 @@ class Provisioner:
         return await self._await_task(create_res, node, CREATE_TASK_MAX_WAIT_S)
 
     async def delete_install_disks(self, vm_id: int, node: str, storage: str, delete_efi: bool = True) -> bool:
-        """Delete the EFI and config disk images used during provisioning."""
-        efi_file = "arcane_efi.raw"
-        config_file = f"{vm_id}_arcane_config.raw"
+        """Delete the VM's config image, and its EFI image unless `delete_efi` is False."""
+        efi_file = _get_vm_efi_file_name(vm_id)
+        config_file = _get_vm_config_file_name(vm_id)
 
         efi_res: ApiResponse[str] | None = None
 
@@ -431,8 +437,8 @@ class Provisioner:
 
         return bool(await self.api.wait_for_task(config_res.payload, node))
 
-    async def upload_arcane_efi(self, node: str, storage: str) -> TaskOutcome:
-        """Upload the EFI bootloader image to the hypervisor."""
+    async def upload_arcane_efi(self, vm_id: int, node: str, storage: str) -> TaskOutcome:
+        """Upload the VM's EFI bootloader image to the hypervisor."""
         with _efi_gz_resource.open("rb") as f:
             efi_disk = gzip.decompress(f.read())
 
@@ -440,7 +446,7 @@ class Provisioner:
             efi_disk,
             node=node,
             storage=storage,
-            file_name="arcane_efi.raw",
+            file_name=_get_vm_efi_file_name(vm_id),
         )
 
         return await self._await_task(upload_res, node, UPLOAD_TASK_MAX_WAIT_S)
@@ -503,10 +509,11 @@ class Provisioner:
 
         smbios_uuid = str(uuid.uuid4())
         config_img = _get_vm_config_file_name(vm_id)
+        efi_img = _get_vm_efi_file_name(vm_id)
 
         return VmConfig(
             efidisk0=(
-                f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,import-from={storage_import}:import/arcane_efi.raw"
+                f"{storage_images}:0,efitype=4m,pre-enrolled-keys=0,import-from={storage_import}:import/{efi_img}"
             ),
             cpu="host",
             ostype="l26",
@@ -540,14 +547,12 @@ class Provisioner:
         self,
         fluxnode: ArcaneOsConfig,
         callback: Callable[[bool, str], None] | None = None,
-        delete_efi: bool = True,
     ) -> bool:
         """Provision a single Fluxnode VM on a Proxmox hypervisor.
 
         Args:
             fluxnode: The node configuration to provision.
             callback: Optional progress callback receiving (success, message).
-            delete_efi: Whether to delete the EFI image after provisioning.
 
         Returns:
             True if provisioning succeeded, False otherwise.
@@ -633,10 +638,10 @@ class Provisioner:
 
         _cb(True, "Config image uploaded")
 
-        efi_ok = await self.upload_arcane_efi(hv.node, hv.storage_import)
+        efi_ok = await self.upload_arcane_efi(vm_id, hv.node, hv.storage_import)
 
         if not efi_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
+            await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
             _cb(False, f"Unable to upload EFI image to hypervisor: {efi_ok.error}")
             return False
 
@@ -645,13 +650,13 @@ class Provisioner:
         created_ok = await self.create_vm(vm_config, node=hv.node)
 
         if not created_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
+            await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
             _cb(False, f"Unable to create VM on hypervisor: {created_ok.error}")
             return False
 
         _cb(True, "VM Created")
 
-        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi)
+        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
 
         if not deleted_ok:
             _cb(False, "Unable to clean up disk images on hypervisor")
