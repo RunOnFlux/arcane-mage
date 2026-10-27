@@ -265,3 +265,12 @@ class TestVmPower:
 
         assert res
         assert sent == {"overrule-shutdown": "1"}
+
+    async def test_download_iso_asks_proxmox_to_check_the_sha256(self):
+        sent: dict[str, str] = {}
+        async with self.proxmox_recording("nodes/pve2/storage/local/download-url", sent) as api:
+            res = await api.download_iso("pve2", "https://example.com/a.iso", "a.iso", "local", sha256="ab12")
+
+        assert res
+        assert sent["checksum"] == "ab12"
+        assert sent["checksum-algorithm"] == "sha256"

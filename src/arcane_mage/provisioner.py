@@ -5,14 +5,15 @@ import logging
 import tempfile
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, NotRequired, Self, TypedDict
 
 import yaml
+from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
 
 from .fat_writer import FAT12Writer
-from .helpers import do_http
+from .helpers import do_http, do_http_to_file
 from .models import ArcaneOsConfig, ArcaneOsConfigGroup, HypervisorConfig
 from .proxmox import ApiResponse, HypervisorNode, ProxmoxApi, TaskOutcome, VmSummary
 
@@ -26,6 +27,12 @@ MIN_IMPORT_STORAGE_BYTES = 10 * 1024 * 1024  # 10 MiB
 # minutes.
 CREATE_TASK_MAX_WAIT_S = 600
 UPLOAD_TASK_MAX_WAIT_S = 120
+
+# A 3+ GB download onto the hypervisor.
+ISO_DOWNLOAD_MAX_WAIT_S = 1800
+
+_RELEASE_FEED = "https://images.runonflux.io/arcane/api/latest_release"
+_RELEASE_BASE = "https://images.runonflux.io/arcane/releases"
 
 # How long a running VM gets to shut itself down before teardown hard-stops it.
 SHUTDOWN_TIMEOUT_S = 120
@@ -120,6 +127,47 @@ async def get_latest_iso_version() -> str | None:
         return None
 
     return res.get("iso")
+
+
+@with_config(ConfigDict(extra="allow"))
+class ArcaneRelease(TypedDict):
+    """The latest ArcaneOS release, as the release feed gives it."""
+
+    iso: str
+    build: str
+    checksums: str
+    release: NotRequired[str]
+    severity: NotRequired[str]
+
+
+_ARCANE_RELEASE = TypeAdapter(ArcaneRelease)
+
+
+def _find_sha256(sums: str, file_name: str) -> str | None:
+    """`file_name`'s digest in a `sha256sum`-format checksum file."""
+    for line in sums.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[1].lstrip("*") == file_name:
+            return parts[0]
+
+    return None
+
+
+@dataclass
+class IsoRefreshResult:
+    """The release a refresh found, and whether it staged its ISO. `error` is set when
+    the refresh failed."""
+
+    iso: str | None = None
+    build: str | None = None
+    release: str | None = None
+    severity: str | None = None
+    changed: bool = False
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 
 @dataclass
@@ -251,6 +299,48 @@ class Provisioner:
             return False
 
         return any(x["content"] == "iso" and x["volid"].endswith(iso_name) for x in res.payload)
+
+    async def refresh_iso(self, node: str, storage_iso: str) -> IsoRefreshResult:
+        """Stage the latest release's ISO in `node`'s `storage_iso`, unless it is there
+        already. The node downloads it, and checks it against the release's sha256 sums."""
+        feed = await do_http(_RELEASE_FEED, total_timeout=10)
+
+        try:
+            release = _ARCANE_RELEASE.validate_python(feed)
+        except ValidationError:
+            return IsoRefreshResult(error=f"Unexpected release feed answer: {feed}")
+
+        iso = release["iso"]
+        found = IsoRefreshResult(
+            iso=iso,
+            build=release["build"],
+            release=release.get("release"),
+            severity=release.get("severity"),
+        )
+
+        if await self.validate_iso_version(node, iso, storage_iso):
+            return found
+
+        base = f"{_RELEASE_BASE}/{release['build']}"
+
+        with tempfile.TemporaryDirectory(prefix="arcane_mage_") as tmpdir:
+            sums_path = Path(tmpdir) / release["checksums"]
+
+            if not await do_http_to_file(f"{base}/{release['checksums']}", sums_path, read_timeout=60):
+                return replace(found, error=f"Unable to fetch {release['checksums']}")
+
+            sha256 = _find_sha256(sums_path.read_text(), iso)
+
+        if not sha256:
+            return replace(found, error=f"{iso} is not listed in {release['checksums']}")
+
+        res = await self.api.download_iso(node, f"{base}/{iso}", iso, storage_iso, sha256=sha256)
+        outcome = await self._await_task(res, node, ISO_DOWNLOAD_MAX_WAIT_S)
+
+        if not outcome:
+            return replace(found, error=f"Download of {iso} failed: {outcome.error}")
+
+        return replace(found, changed=True)
 
     async def validate_network(self, node: str, network: str) -> bool:
         """Whether `network` is a bridge a VM on `node` can attach to: a Linux or

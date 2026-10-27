@@ -468,15 +468,27 @@ class ProxmoxApi:
         return res
 
     async def download_iso(
-        self, node: str, url: str, filename: str, storage: str, verify_certs: bool = True
+        self,
+        node: str,
+        url: str,
+        filename: str,
+        storage: str,
+        verify_certs: bool = True,
+        sha256: str | None = None,
     ) -> ApiResponse[str]:
+        """Have `node` download `url` into `storage`. With `sha256`, Proxmox fails the task
+        when the download does not match it."""
         endpoint = f"nodes/{node}/storage/{storage}/download-url"
-        data = {
+        data: dict[str, str | int] = {
             "content": "iso",
             "filename": filename,
             "url": url,
             "verify-certificates": int(verify_certs),
         }
+
+        if sha256:
+            data["checksum"] = sha256
+            data["checksum-algorithm"] = "sha256"
 
         res = await self._do_post(endpoint, _UPID, data=data)
 

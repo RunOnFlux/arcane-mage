@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import arcane_mage.provisioner as provisioner_module
 from arcane_mage.provisioner import (
     CREATE_TASK_MAX_WAIT_S,
     SHUTDOWN_TIMEOUT_S,
@@ -471,3 +473,80 @@ class TestProvisionFailureReasons:
         assert await provisioner.provision_node(fluxnode)
 
         assert fluxnode.hypervisor.vm_id == 312
+
+
+RELEASE = {"iso": "FluxLive-1775071308.iso", "build": "1775071308", "checksums": "sums-1775071308.sha256"}
+ISO_SHA256 = "fe61bc7930ba31d49247e21fdbe18d0a5bfeab2ac5d7b5d697abb0e7a25c315f"
+SUMS = f"0000  current.efi\n{ISO_SHA256}  FluxLive-1775071308.iso\n"
+
+
+class TestRefreshIso:
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        api = AsyncMock()
+        api.get_storage_content.return_value = ApiSuccess(payload=[])
+        api.download_iso.return_value = ApiSuccess(payload="UPID:download")
+        api.wait_for_task.return_value = TaskOutcome()
+        return api
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Provisioner:
+        async def fetch_sums(url: str, dest: Path, read_timeout: int = 15) -> bool:
+            dest.write_text(SUMS)
+            return True
+
+        monkeypatch.setattr(provisioner_module, "do_http", AsyncMock(return_value=RELEASE))
+        monkeypatch.setattr(provisioner_module, "do_http_to_file", fetch_sums)
+        return Provisioner(api=mock_api)
+
+    async def test_stages_a_missing_iso_checked_against_its_sha256(self, provisioner: Provisioner, mock_api: AsyncMock):
+        result = await provisioner.refresh_iso("pve1", "local")
+
+        assert result.ok
+        assert result.changed
+        mock_api.download_iso.assert_awaited_once_with(
+            "pve1",
+            "https://images.runonflux.io/arcane/releases/1775071308/FluxLive-1775071308.iso",
+            "FluxLive-1775071308.iso",
+            "local",
+            sha256=ISO_SHA256,
+        )
+
+    async def test_an_iso_already_staged_is_left_alone(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_storage_content.return_value = ApiSuccess(
+            payload=[{"content": "iso", "volid": "local:iso/FluxLive-1775071308.iso"}]
+        )
+
+        result = await provisioner.refresh_iso("pve1", "local")
+
+        assert result.ok
+        assert not result.changed
+        mock_api.download_iso.assert_not_awaited()
+
+    async def test_a_failed_download_says_why(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.wait_for_task.return_value = TaskOutcome(error="checksum mismatch")
+
+        result = await provisioner.refresh_iso("pve1", "local")
+
+        assert result.error == "Download of FluxLive-1775071308.iso failed: checksum mismatch"
+
+    async def test_an_iso_missing_from_the_sums_is_not_downloaded(
+        self, provisioner: Provisioner, mock_api: AsyncMock, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def fetch_sums(url: str, dest: Path, read_timeout: int = 15) -> bool:
+            dest.write_text("0000  current.efi\n")
+            return True
+
+        monkeypatch.setattr(provisioner_module, "do_http_to_file", fetch_sums)
+
+        result = await provisioner.refresh_iso("pve1", "local")
+
+        assert result.error == "FluxLive-1775071308.iso is not listed in sums-1775071308.sha256"
+        mock_api.download_iso.assert_not_awaited()
+
+    async def test_an_unreadable_feed_fails(self, provisioner: Provisioner, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(provisioner_module, "do_http", AsyncMock(return_value=None))
+
+        result = await provisioner.refresh_iso("pve1", "local")
+
+        assert result.error == "Unexpected release feed answer: None"

@@ -5,6 +5,7 @@
 ### Added
 
 - **VM tags, notes and memory**: the hypervisor config takes `tags` and `description`, set on the VM when it is created, and `memory_mb`, which overrides the tier's memory. The Ansible `provision` module takes all three.
+- **`refresh-iso`**: stages the latest ArcaneOS ISO on a node unless it is there already (`Provisioner.refresh_iso`). The node downloads it and checks it against the release's sha256 sums. `ProxmoxApi.download_iso` takes `sha256`.
 - **`provision --json` gives the VM id**: each node's result carries `vm_id`, and a single node's is also at the top level. `Provisioner.provision_node` writes an assigned id back to `fluxnode.hypervisor.vm_id`.
 
 ### Changed
