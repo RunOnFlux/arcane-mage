@@ -232,3 +232,36 @@ class TestWaitForTask:
             outcome = await api.wait_for_task(UPID, "pve2")
 
         assert outcome.error == "task status unreadable (HTTP 500: Internal Server Error)"
+
+
+class TestVmPower:
+    @staticmethod
+    @asynccontextmanager
+    async def proxmox_recording(path: str, sent: dict[str, str]) -> AsyncGenerator[ProxmoxApi]:
+        """A ProxmoxApi whose POSTs to `path` record their form fields into `sent`."""
+        app = web.Application()
+
+        async def handler(request: web.Request) -> web.Response:
+            sent.update({k: str(v) for k, v in (await request.post()).items()})
+            return web.json_response({"data": UPID})
+
+        app.router.add_post(f"/api2/json/{path}", handler)
+
+        async with TestServer(app) as server, ProxmoxApi.from_token(str(server.make_url("")).rstrip("/"), TOKEN) as api:
+            yield api
+
+    async def test_shutdown_passes_its_timeout(self):
+        sent: dict[str, str] = {}
+        async with self.proxmox_recording("nodes/pve2/qemu/101/status/shutdown", sent) as api:
+            res = await api.shutdown_vm(101, "pve2", 120)
+
+        assert res
+        assert sent == {"timeout": "120"}
+
+    async def test_stop_overrules_a_running_shutdown(self):
+        sent: dict[str, str] = {}
+        async with self.proxmox_recording("nodes/pve2/qemu/101/status/stop", sent) as api:
+            res = await api.stop_vm(101, "pve2")
+
+        assert res
+        assert sent == {"overrule-shutdown": "1"}

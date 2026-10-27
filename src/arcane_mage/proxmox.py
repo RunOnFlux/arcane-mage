@@ -612,10 +612,20 @@ class ProxmoxApi:
 
         return res
 
+    async def shutdown_vm(self, vm_id: int, node: str, timeout_s: int) -> ApiResponse[str]:
+        """ACPI shutdown, which lets the guest stop its own services. It never forces a stop."""
+        endpoint = f"nodes/{node}/qemu/{vm_id}/status/shutdown"
+
+        res = await self._do_post(endpoint, _UPID, data={"timeout": timeout_s})
+
+        return res
+
     async def stop_vm(self, vm_id: int, node: str) -> ApiResponse[str]:
         endpoint = f"nodes/{node}/qemu/{vm_id}/status/stop"
 
-        res = await self._do_post(endpoint, _UPID)
+        # overrule-shutdown aborts a running shutdown task, which would otherwise hold the
+        # VM's lock and fail the stop.
+        res = await self._do_post(endpoint, _UPID, data={"overrule-shutdown": 1})
 
         return res
 

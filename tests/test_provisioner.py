@@ -4,7 +4,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from arcane_mage.provisioner import CREATE_TASK_MAX_WAIT_S, TIER_CONFIG, Provisioner, is_api_min_version
+from arcane_mage.provisioner import (
+    CREATE_TASK_MAX_WAIT_S,
+    SHUTDOWN_TIMEOUT_S,
+    TIER_CONFIG,
+    Provisioner,
+    is_api_min_version,
+)
 from arcane_mage.proxmox import ApiFailure, ApiSuccess, TaskOutcome
 
 
@@ -237,11 +243,11 @@ class TestProvisionerValidation:
         assert result.error == "Connection refused"
 
     async def test_deprovision_node_success(self, provisioner: Provisioner, mock_api: AsyncMock):
-        """VM found, running, stopped, then deleted."""
+        """VM found, running, shut down, then deleted."""
         mock_api.get_vms.return_value = ApiSuccess(
             payload=[{"vmid": 100, "name": "graham", "status": "running"}],
         )
-        mock_api.stop_vm.return_value = ApiSuccess(payload="UPID:stop1")
+        mock_api.shutdown_vm.return_value = ApiSuccess(payload="UPID:shutdown1")
         mock_api.delete_vm.return_value = ApiSuccess(payload="UPID:del1")
         mock_api.wait_for_task.return_value = TaskOutcome()
 
@@ -252,8 +258,32 @@ class TestProvisionerValidation:
         result = await provisioner.deprovision_node(fluxnode)
 
         assert result is True
+        mock_api.shutdown_vm.assert_called_once_with(100, "bigchug", SHUTDOWN_TIMEOUT_S)
+        mock_api.stop_vm.assert_not_called()
+        mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+
+    async def test_deprovision_hard_stops_a_vm_that_does_not_shut_down(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.get_vms.return_value = ApiSuccess(
+            payload=[{"vmid": 100, "name": "graham", "status": "running"}],
+        )
+        mock_api.shutdown_vm.return_value = ApiSuccess(payload="UPID:shutdown1")
+        mock_api.stop_vm.return_value = ApiSuccess(payload="UPID:stop1")
+        mock_api.delete_vm.return_value = ApiSuccess(payload="UPID:del1")
+
+        async def wait(task: str, node: str, max_wait_s: int = 10) -> TaskOutcome:
+            return TaskOutcome(error="task still running after 130s") if task == "UPID:shutdown1" else TaskOutcome()
+
+        mock_api.wait_for_task.side_effect = wait
+
+        messages: list[str] = []
+        result = await provisioner.deprovision_vm("bigchug", lambda ok, msg: messages.append(msg), vm_id=100)
+
+        assert result is True
         mock_api.stop_vm.assert_called_once_with(100, "bigchug")
         mock_api.delete_vm.assert_called_once_with(100, "bigchug")
+        assert "VM did not shut down (task still running after 130s), stopping..." in messages
 
     async def test_deprovision_node_vm_not_found(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_vms.return_value = ApiSuccess(

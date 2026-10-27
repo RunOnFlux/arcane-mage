@@ -6,6 +6,7 @@
 
 - **Task outcomes**: `ProxmoxApi.wait_for_task` returns a `TaskOutcome`, truthy when the task ended OK, with Proxmox's exit status in `error` when it did not. `Provisioner.create_vm`, `start_vm`, `stop_vm`, `delete_vm`, `upload_arcane_config` and `upload_arcane_efi` return it too. `ApiFailure.reason` gives a failure in one line.
 - **Per-VM EFI images**: each VM uploads, imports and deletes its own `<vmid>_arcane_efi.raw`. `Provisioner.provision_node` no longer takes `delete_efi`, and `upload_arcane_efi` takes the VM id.
+- **Graceful teardown**: deprovisioning a running VM asks it to shut down (ACPI, `ProxmoxApi.shutdown_vm`, 120 s) so ArcaneOS stops its services, and hard-stops it only if it does not go down. The hard stop passes `overrule-shutdown`, so a hung shutdown task cannot block it.
 - A failed provisioning or teardown step carries the reason: "Unable to create VM on hypervisor: unable to create VM 264 - cannot import from …".
 
 ### Fixed
