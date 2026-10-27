@@ -63,7 +63,7 @@ options:
     default: false
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 2.0.0"
+  - "arcane-mage >= 4.0.0"
 author:
   - RunOnFlux
 """
