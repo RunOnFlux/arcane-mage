@@ -25,6 +25,8 @@ class HypervisorConfig:
     credential: str = Field(repr=False)
     keychain: bool = True
     name: str | None = None
+    # Skips cluster detection, for a cluster member that is to be treated as standalone.
+    force_standalone: bool = False
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, HypervisorConfig):

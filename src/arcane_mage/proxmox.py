@@ -58,10 +58,12 @@ class ParsedUserPass:
 
 @dataclass(frozen=True)
 class ResolvedConnection:
-    """Resolved Proxmox connection details (URL + parsed token)."""
+    """Resolved Proxmox connection details (URL + parsed token). `force_standalone` skips
+    cluster detection, for a cluster member that is to be treated as standalone."""
 
     url: str
     token: ParsedToken
+    force_standalone: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,25 @@ class ClusterConfigNode(TypedDict):
 
 
 @with_config(_KEEP_ALL_FIELDS)
+class ClusterStatusEntry(TypedDict):
+    """One `/cluster/status` entry: the cluster itself (`type` "cluster") or a member
+    (`type` "node")."""
+
+    type: str
+    name: NotRequired[str]
+    online: NotRequired[int]
+    local: NotRequired[int]
+    quorate: NotRequired[int]
+
+
+@with_config(_KEEP_ALL_FIELDS)
+class ClusterVm(TypedDict):
+    vmid: int
+    node: str
+    name: NotRequired[str]
+
+
+@with_config(_KEEP_ALL_FIELDS)
 class NodeVersion(TypedDict):
     version: str
     release: NotRequired[str]
@@ -195,6 +216,8 @@ _UPID = TypeAdapter(str)
 _NONE = TypeAdapter(type(None))
 _HYPERVISOR_NODES = TypeAdapter(list[HypervisorNode])
 _CLUSTER_CONFIG_NODES = TypeAdapter(list[ClusterConfigNode])
+_CLUSTER_STATUS = TypeAdapter(list[ClusterStatusEntry])
+_CLUSTER_VMS = TypeAdapter(list[ClusterVm])
 _NODE_VERSION = TypeAdapter(NodeVersion)
 _NODE_STORAGE = TypeAdapter(list[NodeStorage])
 _STORAGE_CONFIG = TypeAdapter(list[StorageConfig])
@@ -424,6 +447,18 @@ class ProxmoxApi:
 
     async def get_cluster_nodes(self) -> ApiResponse[list[ClusterConfigNode]]:
         res = await self._do_get("cluster/config/nodes", _CLUSTER_CONFIG_NODES)
+
+        return res
+
+    async def get_cluster_status(self) -> ApiResponse[list[ClusterStatusEntry]]:
+        """The cluster and its members; a standalone host has no "cluster" entry."""
+        res = await self._do_get("cluster/status", _CLUSTER_STATUS)
+
+        return res
+
+    async def get_cluster_vms(self) -> ApiResponse[list[ClusterVm]]:
+        """Every VM and container in the cluster, on every node."""
+        res = await self._do_get("cluster/resources?type=vm", _CLUSTER_VMS)
 
         return res
 

@@ -389,6 +389,7 @@ class TestProvisionFailureReasons:
         api.upload_file.return_value = ApiSuccess(payload="UPID:up")
         api.create_vm.return_value = ApiSuccess(payload="UPID:create")
         api.start_vm.return_value = ApiSuccess(payload="UPID:start")
+        api.get_cluster_status.return_value = ApiSuccess(payload=[{"type": "node", "name": "pve1", "local": 1}])
         api.delete_file.return_value = ApiSuccess(payload="UPID:del")
         api.wait_for_task.return_value = TaskOutcome()
         return api
@@ -464,6 +465,28 @@ class TestProvisionFailureReasons:
         assert mock_api.upload_file.call_args_list[1].kwargs["file_name"] == "264_arcane_efi.raw"
         deleted = sorted(c.args[0] for c in mock_api.delete_file.call_args_list)
         assert deleted == ["264_arcane_config.raw", "264_arcane_efi.raw"]
+
+    async def test_a_standalone_host_adds_no_step(self, provisioner: Provisioner):
+        steps: list[str] = []
+
+        assert await provisioner.provision_node(self.fluxnode(), lambda ok, msg: steps.append(msg))
+
+        assert not any("Cluster" in step for step in steps)
+
+    async def test_a_cluster_check_that_fails_stops_the_run(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status(quorate=0))
+
+        assert await self.failures(provisioner) == ["Cluster 'lab' has lost quorum"]
+        mock_api.upload_file.assert_not_awaited()
+
+    async def test_a_cluster_run_reports_its_check(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status())
+        mock_api.get_cluster_vms.return_value = ApiSuccess(payload=[])
+        steps: list[str] = []
+
+        assert await provisioner.provision_node(self.fluxnode(), lambda ok, msg: steps.append(msg))
+
+        assert steps[0] == "Cluster 'lab' validated"
 
     async def test_an_assigned_vm_id_is_written_back(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_next_id.return_value = ApiSuccess(payload=312)
@@ -557,3 +580,86 @@ class TestRefreshIso:
         result = await provisioner.refresh_iso("pve1", "local")
 
         assert result.error == "Unexpected release feed answer: {'iso': 'FluxLive-1.iso'}"
+
+
+def cluster_status(*, quorate: int = 1, pve2_online: int = 1) -> list[dict[str, object]]:
+    """/cluster/status for cluster "lab", members pve1 and pve2."""
+    return [
+        {"type": "cluster", "name": "lab", "quorate": quorate},
+        {"type": "node", "name": "pve1", "online": 1, "local": 1},
+        {"type": "node", "name": "pve2", "online": pve2_online, "local": 0},
+    ]
+
+
+class TestValidateCluster:
+    @pytest.fixture
+    def mock_api(self) -> AsyncMock:
+        api = AsyncMock()
+        api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status())
+        api.get_cluster_vms.return_value = ApiSuccess(payload=[{"vmid": 101, "node": "pve2", "name": "node-a"}])
+        return api
+
+    @pytest.fixture
+    def provisioner(self, mock_api: AsyncMock) -> Provisioner:
+        return Provisioner(api=mock_api)
+
+    async def test_a_standalone_host_has_no_cluster_checks(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_status.return_value = ApiSuccess(payload=[{"type": "node", "name": "pve1", "local": 1}])
+
+        assert await provisioner.validate_cluster("pve1", "node-b") is None
+
+    async def test_force_standalone_reads_nothing(self, mock_api: AsyncMock):
+        provisioner = Provisioner(api=mock_api, force_standalone=True)
+
+        assert await provisioner.validate_cluster("pve1", "node-b") is None
+        mock_api.get_cluster_status.assert_not_awaited()
+
+    async def test_an_unreadable_status_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_status.return_value = ApiFailure(status=403, error="Permission check failed")
+
+        check = await provisioner.validate_cluster("pve1", "node-b")
+
+        assert check is not None
+        ok, msg = check
+        assert ok is False
+        assert msg.startswith("Unable to read /cluster/status (HTTP 403: Permission check failed)")
+
+    async def test_a_cluster_without_quorum_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status(quorate=0))
+
+        assert await provisioner.validate_cluster("pve1", "node-b") == (False, "Cluster 'lab' has lost quorum")
+
+    async def test_an_offline_node_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_status.return_value = ApiSuccess(payload=cluster_status(pve2_online=0))
+
+        assert await provisioner.validate_cluster("pve2", "node-b") == (
+            False,
+            "Node 'pve2' is offline in cluster 'lab'",
+        )
+
+    async def test_an_unknown_node_fails(self, provisioner: Provisioner):
+        assert await provisioner.validate_cluster("pve9", "node-b") == (
+            False,
+            "Node 'pve9' is offline in cluster 'lab'",
+        )
+
+    async def test_another_online_node_passes(self, provisioner: Provisioner):
+        assert await provisioner.validate_cluster("pve2", "node-b") == (True, "Cluster 'lab' validated")
+
+    async def test_a_name_taken_on_another_node_fails(self, provisioner: Provisioner):
+        assert await provisioner.validate_cluster("pve1", "node-a") == (
+            False,
+            "VM name 'node-a' is taken by VM 101 on 'pve2'",
+        )
+
+    async def test_an_unreadable_vm_list_fails(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_cluster_vms.return_value = ApiFailure(timed_out=True)
+
+        assert await provisioner.validate_cluster("pve1", "node-b") == (
+            False,
+            "Unable to list the cluster's VMs (request timed out)",
+        )
+
+    async def test_no_vm_name_skips_the_name_check(self, provisioner: Provisioner, mock_api: AsyncMock):
+        assert await provisioner.validate_cluster("pve1") == (True, "Cluster 'lab' validated")
+        mock_api.get_cluster_vms.assert_not_awaited()
