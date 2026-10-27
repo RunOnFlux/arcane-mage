@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from arcane_mage.provisioner import TIER_CONFIG, Provisioner, is_api_min_version
-from arcane_mage.proxmox import ApiFailure, ApiSuccess, ProxmoxApi
+from arcane_mage.proxmox import ApiFailure, ApiSuccess
 
 
 class TestIsApiMinVersion:
@@ -122,17 +122,6 @@ class TestProvisionerValidation:
         mock_api.get_networks.return_value = ApiFailure(error="Connection Error")
 
         assert await provisioner.validate_network("node1", "vmbr0") is False
-
-    async def test_get_networks_requests_any_bridge(self):
-        api = ProxmoxApi.__new__(ProxmoxApi)
-        api._do_get = AsyncMock(return_value=ApiSuccess(payload=[]))
-
-        await api.get_networks("node1")
-
-        assert api._do_get.await_count == 1
-        call = api._do_get.await_args
-        assert call is not None
-        assert call.args[0] == "nodes/node1/network?type=any_bridge"
 
     async def test_validate_iso_version_found(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_storage_content.return_value = ApiSuccess(

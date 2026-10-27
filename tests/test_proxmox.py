@@ -170,3 +170,21 @@ class TestResolvedConnection:
 
         with pytest.raises(AttributeError):
             conn.token = ParsedToken("other@pam", "t", "v")  # ty: ignore[invalid-assignment]
+
+
+class TestGetNetworks:
+    async def test_requests_any_bridge(self):
+        app = web.Application()
+
+        async def handler(request: web.Request) -> web.Response:
+            if request.query.get("type") != "any_bridge":
+                return web.json_response({"data": None}, status=400)
+            return web.json_response({"data": [{"iface": "flux50", "type": "vnet"}]})
+
+        app.router.add_get("/api2/json/nodes/pve1/network", handler)
+
+        async with TestServer(app) as server, ProxmoxApi.from_token(str(server.make_url("")).rstrip("/"), TOKEN) as api:
+            res = await api.get_networks("pve1")
+
+        assert res
+        assert res.payload == [{"iface": "flux50", "type": "vnet"}]

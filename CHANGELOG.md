@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 3.2.1
 
 ### Fixed
 
 - `validate` now accepts SDN VNets applied on the target node, via `/nodes/{node}/network?type=any_bridge`. The same call also rejects interfaces a VM cannot attach to (`eth0`, `bond0`, `vmbr0.50`).
+
+### Changed
+
+- `ProxmoxApi.get_networks` returns the bridges on the node a VM can attach to (Linux and OVS bridges, and SDN VNets applied there), not every interface.
 
 ## 3.2.0
 
@@ -18,6 +22,7 @@
 ### Added
 
 - **Console copy devices**: every VM is created with `vga: std,clipboard=vnc` and `serial0: socket`. The node's console offers its configure link to the viewer's clipboard (the noVNC clipboard panel) and writes it to the serial port (the xterm.js console). VNC clipboard needs PVE 8.2, below the 8.4.1 minimum.
+
 ## 3.0.0
 
 ### Breaking Changes
