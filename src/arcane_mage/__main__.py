@@ -265,7 +265,8 @@ def provision(
                     console.print(f"\n[bold]{hostname}[/bold]")
 
                 result = await provisioner.provision_node(node, callback=callback)
-                results.append({"hostname": hostname, "ok": result, "steps": steps})
+                vm_id = node.hypervisor.vm_id if node.hypervisor else None
+                results.append({"hostname": hostname, "ok": result, "vm_id": vm_id, "steps": steps})
 
                 if not use_json:
                     if result:
@@ -277,9 +278,11 @@ def provision(
                     all_ok = False
 
             if use_json:
-                print(
-                    _json_ok({"nodes": results}) if all_ok else _json_error("Provisioning failed", {"nodes": results})
-                )
+                payload: dict[str, object] = {"nodes": results}
+                # A single node's vm_id is also given at the top level.
+                if len(results) == 1 and results[0]["vm_id"] is not None:
+                    payload["vm_id"] = results[0]["vm_id"]
+                print(_json_ok(payload) if all_ok else _json_error("Provisioning failed", payload))
 
             return all_ok
 

@@ -462,3 +462,12 @@ class TestProvisionFailureReasons:
         assert mock_api.upload_file.call_args_list[1].kwargs["file_name"] == "264_arcane_efi.raw"
         deleted = sorted(c.args[0] for c in mock_api.delete_file.call_args_list)
         assert deleted == ["264_arcane_config.raw", "264_arcane_efi.raw"]
+
+    async def test_an_assigned_vm_id_is_written_back(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=312)
+        fluxnode = self.fluxnode()
+        fluxnode.hypervisor.vm_id = None
+
+        assert await provisioner.provision_node(fluxnode)
+
+        assert fluxnode.hypervisor.vm_id == 312

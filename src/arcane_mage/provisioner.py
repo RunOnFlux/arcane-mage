@@ -579,7 +579,8 @@ class Provisioner:
             callback: Optional progress callback receiving (success, message).
 
         Returns:
-            True if provisioning succeeded, False otherwise.
+            True if provisioning succeeded, False otherwise. Once the VM's id is
+            known, `fluxnode.hypervisor.vm_id` holds it, an assigned id included.
         """
 
         def _cb(ok: bool, msg: str) -> None:
@@ -652,6 +653,7 @@ class Provisioner:
             return False
 
         vm_id = vm_config.vmid
+        hv.vm_id = vm_id
 
         config_upload = yaml.dump({"nodes": [fluxnode.to_dict()]})
 
