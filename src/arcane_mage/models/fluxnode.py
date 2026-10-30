@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import ClassVar, Literal
+from urllib.parse import urlsplit
 
 import aiofiles
 import yaml
@@ -33,21 +34,26 @@ COMPRESSED_PUBKEY = re.compile(r"0[23][0-9a-f]{64}")
 @py_dataclass
 class FluxnodeChainConfig:
     """The network the node installs onto, fixed at install: absent, mainnet;
-    for a lab, labnet and the lab's compressed public key. The installer checks
-    the identity key belongs to it."""
+    for a lab, labnet, the lab's compressed public key and `update_url`, the lab's
+    CDN its updater reads (a lab image carries no lab of its own). The installer
+    checks the identity key belongs to it; a release image refuses any lab."""
 
     network: Literal["mainnet", "labnet"] = "mainnet"
     key: str | None = None
+    update_url: str | None = None
 
     @model_validator(mode="after")
-    def check_key(self) -> FluxnodeChainConfig:
+    def check_lab(self) -> FluxnodeChainConfig:
         if self.network == "labnet":
             key = (self.key or "").lower()
             if not COMPRESSED_PUBKEY.fullmatch(key):
                 raise ValueError("labnet needs key: the lab's compressed public key (66 hex, 02/03)")
             self.key = key
-        elif self.key is not None:
-            raise ValueError("key is for labnet only")
+            url = urlsplit(self.update_url or "")
+            if url.scheme not in ("http", "https") or not url.hostname:
+                raise ValueError("labnet needs update_url: the lab's CDN, e.g. http://cdn.lab/arcane")
+        elif self.key is not None or self.update_url is not None:
+            raise ValueError("key and update_url are for labnet only")
         return self
 
 
@@ -66,6 +72,12 @@ class FluxnodeConfig:
     # verifies it against that identity. Nothing here reads it.
     dev_token: str | None = None
     chain: FluxnodeChainConfig | None = None
+
+    @model_validator(mode="after")
+    def check_lab_donor(self) -> FluxnodeConfig:
+        if self.chain is not None and self.chain.network == "labnet" and not self.network.params_source:
+            raise ValueError("a labnet install names the lab's donor as network.params_source")
+        return self
 
     @classmethod
     def from_dict(cls, params: dict) -> FluxnodeConfig:

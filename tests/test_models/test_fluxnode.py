@@ -88,6 +88,9 @@ class TestFluxnodeConfig:
 
 
 LAB_KEY = "036fb1722c93444bc06daffaacc58c38e9e9c17b7fb2758486c26d13160e4eb4aa"
+LAB_CDN = "http://172.16.32.215/arcane"
+LAB = {"network": "labnet", "key": LAB_KEY, "update_url": LAB_CDN}
+DONOR = {"private_chain_sources": ["25.47.0.2:16127"], "params_source": "25.47.0.2:16127"}
 
 
 class TestFluxnodeChain:
@@ -95,18 +98,25 @@ class TestFluxnodeChain:
         assert "chain" not in FluxnodeConfig.from_dict(fluxnode_dict).to_dict()
 
     def test_labnet_chain_round_trips(self, fluxnode_dict: dict):
-        config = FluxnodeConfig.from_dict({**fluxnode_dict, "chain": {"network": "labnet", "key": LAB_KEY.upper()}})
-        assert config.to_dict()["chain"] == {"network": "labnet", "key": LAB_KEY}
+        raw = {**fluxnode_dict, "chain": LAB | {"key": LAB_KEY.upper()}, "network": DONOR}
+        assert FluxnodeConfig.from_dict(raw).to_dict()["chain"] == LAB
+
+    def test_a_labnet_install_names_its_donor(self, fluxnode_dict: dict):
+        with pytest.raises(ValueError, match="params_source"):
+            FluxnodeConfig.from_dict({**fluxnode_dict, "chain": LAB})
 
     @pytest.mark.parametrize(
         "chain",
         [
-            {"network": "labnet"},
-            {"network": "labnet", "key": "04" + LAB_KEY[2:]},
+            {"network": "labnet", "update_url": LAB_CDN},
+            LAB | {"key": "04" + LAB_KEY[2:]},
+            {"network": "labnet", "key": LAB_KEY},
+            LAB | {"update_url": "ftp://172.16.32.215/arcane"},
             {"network": "mainnet", "key": LAB_KEY},
+            {"network": "mainnet", "update_url": LAB_CDN},
             {"network": "testnet"},
         ],
     )
     def test_bad_chains_are_refused(self, fluxnode_dict: dict, chain: dict):
         with pytest.raises(ValueError):
-            FluxnodeConfig.from_dict({**fluxnode_dict, "chain": chain})
+            FluxnodeConfig.from_dict({**fluxnode_dict, "chain": chain, "network": DONOR})

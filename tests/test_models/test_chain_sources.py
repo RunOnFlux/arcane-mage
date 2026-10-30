@@ -8,10 +8,13 @@ import yaml
 from arcane_mage.models.config import ArcaneOsConfig
 
 LAB_KEY = "020483178bc32818eb9922b68ac0771fe95136a6edf746016125270cfc2111fd5a"
+LAB = {"network": "labnet", "key": LAB_KEY, "update_url": "http://172.16.32.215/arcane"}
 
 
 async def written_sources(tmp_path: Path, node: dict, sources: list[str], chain: dict | None) -> list[str]:
     node["fluxnode"]["network"] = {"private_chain_sources": sources}
+    if chain is not None and chain["network"] == "labnet":
+        node["fluxnode"]["network"]["params_source"] = "25.47.0.2:16127"
     if chain is not None:
         node["fluxnode"]["chain"] = chain
     path = tmp_path / "installer.yaml"
@@ -30,7 +33,7 @@ async def test_a_mainnet_install_keeps_only_private_chain_sources(tmp_path: Path
 async def test_a_labnet_install_keeps_the_labs_donor_on_its_internet(tmp_path: Path, minimal_node_dict: dict):
     sources = ["25.47.0.2:16127", "192.168.147.10:16127"]
 
-    kept = await written_sources(tmp_path, minimal_node_dict, sources, {"network": "labnet", "key": LAB_KEY})
+    kept = await written_sources(tmp_path, minimal_node_dict, sources, LAB)
 
     assert kept == ["25.47.0.2:16127", "192.168.147.10:16127"]
 
@@ -52,7 +55,7 @@ async def test_a_labnet_install_keeps_the_labs_donor_on_its_internet(tmp_path: P
 async def test_a_labnet_install_still_drops_what_is_no_unicast_source(
     tmp_path: Path, minimal_node_dict: dict, source: str
 ):
-    kept = await written_sources(tmp_path, minimal_node_dict, [source], {"network": "labnet", "key": LAB_KEY})
+    kept = await written_sources(tmp_path, minimal_node_dict, [source], LAB)
 
     assert kept == []
 
@@ -106,5 +109,5 @@ async def test_a_params_source_a_chain_source_could_not_be_is_dropped(
 
 
 async def test_a_labnet_install_keeps_a_params_source_on_labnets_internet(tmp_path: Path, minimal_node_dict: dict):
-    labnet = {"network": "labnet", "key": LAB_KEY}
+    labnet = LAB
     assert await written_params_source(tmp_path, minimal_node_dict, "25.47.0.2:16127", labnet) == "25.47.0.2:16127"

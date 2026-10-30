@@ -139,8 +139,9 @@ The network the node installs onto, fixed at install. Omit it for mainnet.
 |---|---|---|---|---|
 | `network` | string | no | `mainnet` | `mainnet` or `labnet` |
 | `key` | string | for labnet | | The lab's compressed public key (66 hex characters, `02`/`03` prefix). Not allowed for mainnet |
+| `update_url` | string | for labnet | | The lab's CDN, where the node's updater finds lab builds (`http(s)://<host>/arcane`). Not allowed for mainnet |
 
-The installer checks that the identity key belongs to the chain's network.
+A lab image carries no lab of its own: it installs only from a config naming one, with the lab's donor as `fluxnode.network.params_source` (and a chain source), and never onto mainnet. A release image installs onto mainnet only and refuses any lab setting. The installer checks that the identity key belongs to the chain's network.
 
 #### fluxnode.gravity (optional)
 

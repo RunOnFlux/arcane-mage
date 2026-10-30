@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Breaking Changes
+
+- **A labnet install names its lab in full**: `fluxnode.chain` with `network: labnet` needs `update_url`, the lab's CDN its updater reads, and `fluxnode.network.params_source`, the lab's donor. Lab images no longer carry a lab of their own. `update_url` is not allowed for mainnet.
+
 ## 4.0.0
 
 ### Breaking Changes
