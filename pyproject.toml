@@ -1,6 +1,6 @@
 [project]
 name = "arcane-mage"
-version = "4.0.0"
+version = "5.0.0"
 description = "Automation helper for Fluxnodes"
 readme = "README.md"
 authors = [
