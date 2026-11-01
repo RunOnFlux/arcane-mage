@@ -27,6 +27,7 @@ MIN_IMPORT_STORAGE_BYTES = 10 * 1024 * 1024  # 10 MiB
 # minutes.
 CREATE_TASK_MAX_WAIT_S = 600
 UPLOAD_TASK_MAX_WAIT_S = 120
+DELETE_TASK_MAX_WAIT_S = 10
 
 # A 3+ GB download onto the hypervisor.
 ISO_DOWNLOAD_MAX_WAIT_S = 1800
@@ -583,25 +584,21 @@ class Provisioner:
 
         return await self._await_task(create_res, node, CREATE_TASK_MAX_WAIT_S)
 
-    async def delete_install_disks(self, vm_id: int, node: str, storage: str, delete_efi: bool = True) -> bool:
-        """Delete the VM's config image, and its EFI image unless `delete_efi` is False."""
-        efi_file = _get_vm_efi_file_name(vm_id)
-        config_file = _get_vm_config_file_name(vm_id)
-
-        efi_res: ApiResponse[str] | None = None
-
+    async def delete_install_disks(self, vm_id: int, node: str, storage: str, delete_efi: bool = True) -> TaskOutcome:
+        """Delete the VM's config image, and its EFI image unless `delete_efi` is False, one
+        after the other. Each is attempted; the outcome names the first that failed and why."""
+        images = [_get_vm_config_file_name(vm_id)]
         if delete_efi:
-            efi_res = await self.api.delete_file(efi_file, node, storage, content="import")
+            images.insert(0, _get_vm_efi_file_name(vm_id))
 
-        config_res = await self.api.delete_file(config_file, node, storage, content="import")
+        failed: TaskOutcome | None = None
+        for image in images:
+            res = await self.api.delete_file(image, node, storage, content="import")
+            outcome = await self._await_task(res, node, DELETE_TASK_MAX_WAIT_S)
+            if not outcome and failed is None:
+                failed = TaskOutcome(error=f"{image}: {outcome.error}")
 
-        if efi_res is not None and (not efi_res or not await self.api.wait_for_task(efi_res.payload, node)):
-            return False
-
-        if not config_res:
-            return False
-
-        return bool(await self.api.wait_for_task(config_res.payload, node))
+        return failed if failed is not None else TaskOutcome()
 
     async def upload_arcane_efi(self, vm_id: int, node: str, storage: str) -> TaskOutcome:
         """Upload the VM's EFI bootloader image to the hypervisor."""
@@ -844,7 +841,7 @@ class Provisioner:
         deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
 
         if not deleted_ok:
-            _cb(False, "Unable to clean up disk images on hypervisor")
+            _cb(False, f"Unable to clean up disk images on hypervisor: {deleted_ok.error}")
             return False
 
         _cb(True, "Disk images cleaned")

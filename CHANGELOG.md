@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.0.1
+
+### Changed
+
+- **Install image cleanup names its failure**: when `provision_node` cannot delete a VM's uploaded config or EFI image, its message carries the image and Proxmox's reason (`Unable to clean up disk images on hypervisor: 104_arcane_config.raw: HTTP 500: …`). `Provisioner.delete_install_disks` deletes the images one after the other, attempts each, and returns a `TaskOutcome` naming the first that failed (`if not outcome:` behaves as before).
+
 ## 5.0.0
 
 ### Breaking Changes

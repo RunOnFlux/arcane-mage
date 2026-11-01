@@ -276,6 +276,44 @@ class TestProvisionerValidation:
 
         assert result.error == "Connection refused"
 
+    async def test_install_images_are_deleted_one_after_the_other(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.delete_file.side_effect = [ApiSuccess(payload="UPID:efi"), ApiSuccess(payload="UPID:cfg")]
+        mock_api.wait_for_task.return_value = TaskOutcome()
+
+        assert await provisioner.delete_install_disks(104, "node1", "local")
+        assert [c.args[0] for c in mock_api.delete_file.call_args_list] == [
+            "104_arcane_efi.raw",
+            "104_arcane_config.raw",
+        ]
+        assert [c.args[0] for c in mock_api.wait_for_task.call_args_list] == ["UPID:efi", "UPID:cfg"]
+
+    async def test_a_failed_image_delete_names_the_image_and_proxmoxs_reason(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.delete_file.side_effect = [
+            ApiSuccess(payload="UPID:efi"),
+            ApiFailure(status=500, error="starting worker failed: example"),
+        ]
+        mock_api.wait_for_task.return_value = TaskOutcome()
+
+        result = await provisioner.delete_install_disks(104, "node1", "local")
+
+        assert result.error == "104_arcane_config.raw: HTTP 500: starting worker failed: example"
+
+    async def test_a_failed_efi_delete_still_deletes_the_config_image(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        mock_api.delete_file.side_effect = [
+            ApiFailure(status=500, error="starting worker failed: example"),
+            ApiSuccess(payload="UPID:cfg"),
+        ]
+        mock_api.wait_for_task.return_value = TaskOutcome()
+
+        result = await provisioner.delete_install_disks(104, "node1", "local")
+
+        assert result.error == "104_arcane_efi.raw: HTTP 500: starting worker failed: example"
+        assert mock_api.delete_file.call_count == 2
+
     async def test_deprovision_node_success(self, provisioner: Provisioner, mock_api: AsyncMock):
         """VM found, running, shut down, then deleted."""
         mock_api.get_vms.return_value = ApiSuccess(
