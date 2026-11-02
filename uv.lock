@@ -204,7 +204,7 @@ wheels = [
 
 [[package]]
 name = "arcane-mage"
-version = "5.0.0"
+version = "5.0.1"
 source = { editable = "." }
 default-groups = ["ansible", "dev"]
 dependencies = [
