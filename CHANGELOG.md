@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **License**: arcane-mage and the Ansible collection are under the Blue Oak Model License 1.0.0 (`BlueOak-1.0.0`). The collection carries its own `LICENSE`.
+
 ## 5.0.1
 
 ### Changed

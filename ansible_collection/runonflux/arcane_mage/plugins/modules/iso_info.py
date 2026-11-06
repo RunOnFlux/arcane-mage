@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 # Copyright: (c) 2025, RunOnFlux
-# License: MIT
+# License: BlueOak-1.0.0
 
 DOCUMENTATION = r"""
 ---

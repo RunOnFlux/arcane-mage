@@ -105,4 +105,4 @@ All modules use `delegate_to: localhost` since they communicate with Proxmox via
 
 ## License
 
-MIT
+[Blue Oak Model License 1.0.0](LICENSE)

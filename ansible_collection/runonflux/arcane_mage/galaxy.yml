@@ -5,7 +5,8 @@ readme: README.md
 authors:
   - RunOnFlux <info@runonflux.io>
 description: Ansible collection for provisioning ArcaneOS FluxNodes on Proxmox via arcane-mage
-license_file: ../../../LICENSE
+license:
+  - BlueOak-1.0.0
 tags:
   - proxmox
   - fluxnode
