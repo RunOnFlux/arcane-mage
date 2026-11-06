@@ -21,7 +21,6 @@ options:
     description: >
       Proxmox API token. Required only when I(download=true).
     type: str
-    no_log: true
   verify_ssl:
     description: Whether to verify SSL certificates.
     type: bool
@@ -42,9 +41,9 @@ options:
     default: false
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 4.0.0"
+  - "arcane-mage >= 5.0.1"
 author:
-  - RunOnFlux
+  - RunOnFlux (@RunOnFlux)
 """
 
 EXAMPLES = r"""
@@ -80,14 +79,22 @@ downloaded:
 """
 
 import asyncio
+import traceback
 
 from ansible.module_utils.basic import AnsibleModule
+
+from ansible_collections.runonflux.arcane_mage.plugins.module_utils.library import require_arcane_mage
+
+try:
+    from arcane_mage import ProxmoxApi, get_latest_iso_version
+
+    IMPORT_ERROR = None
+except ImportError:
+    IMPORT_ERROR = traceback.format_exc()
 
 
 async def run_iso_info(params):
     """Fetch latest ISO info and optionally download."""
-    from arcane_mage import ProxmoxApi, get_latest_iso_version
-
     iso_name = await get_latest_iso_version()
 
     if not iso_name:
@@ -152,13 +159,13 @@ def main():
         supports_check_mode=True,
     )
 
+    require_arcane_mage(module, IMPORT_ERROR)
+
     if module.check_mode:
         module.exit_json(changed=False, iso_name="", downloaded=False)
 
     try:
         success, iso_name, downloaded, error = asyncio.run(run_iso_info(module.params))
-    except ImportError:
-        module.fail_json(msg="arcane-mage library is not installed. Install with: pip install arcane-mage")
     except Exception as e:
         module.fail_json(msg=f"ISO info error: {e}")
 

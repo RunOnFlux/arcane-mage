@@ -5,27 +5,33 @@ Ansible collection for provisioning ArcaneOS FluxNodes on Proxmox hypervisors us
 ## Requirements
 
 - Python >= 3.13 on the Ansible controller
-- `arcane-mage >= 4.0.0` (`pip install arcane-mage`)
+- ansible-core >= 2.22.0
+- `arcane-mage >= 5.0.1` (`pip install "arcane-mage>=5.0.1"`) in the Python that runs the modules
 - Proxmox VE >= 8.4.1
 - Proxmox API token with appropriate permissions
 
 ## Installation
 
+```bash
+ansible-galaxy collection install runonflux.arcane_mage
+pip install "arcane-mage>=5.0.1"
+```
+
 ### From source (development)
 
 ```bash
-cd arcane-mage/ansible_collection/runonflux/arcane_mage
+cd arcane-mage/ansible_collections/runonflux/arcane_mage
 ansible-galaxy collection build
 ansible-galaxy collection install runonflux-arcane_mage-*.tar.gz
 ```
 
 ### Using collections path
 
-Add the path to your `ansible.cfg`:
+Point `collections_path` at the repository root, which holds `ansible_collections/`:
 
 ```ini
 [defaults]
-collections_path = /path/to/arcane-mage/ansible_collection
+collections_path = /path/to/arcane-mage
 ```
 
 ## Modules
@@ -39,6 +45,8 @@ collections_path = /path/to/arcane-mage/ansible_collection
 | `runonflux.arcane_mage.iso_info` | Get latest ArcaneOS ISO version, optionally download it |
 
 All modules use `delegate_to: localhost` since they communicate with Proxmox via its REST API.
+
+`provision` installs onto mainnet unless `chain` says otherwise. A labnet install sets `chain` (`network: labnet`, `key`, `update_url`) and `params_source`, the lab's donor.
 
 ## Quick Start
 

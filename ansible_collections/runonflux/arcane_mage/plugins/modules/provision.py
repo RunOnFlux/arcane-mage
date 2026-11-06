@@ -25,7 +25,6 @@ options:
       Proxmox API token in format C(user@realm!tokenname=tokenvalue).
     required: true
     type: str
-    no_log: true
   verify_ssl:
     description: Whether to verify SSL certificates.
     type: bool
@@ -108,7 +107,6 @@ options:
       Password for the console user. Will be hashed with Yescrypt.
       If omitted, console login is disabled (SSH key only).
     type: str
-    no_log: true
   ssh_pubkey:
     description: >
       SSH public key (OpenSSH format), an operate key. ISOs from before tiered
@@ -145,7 +143,6 @@ options:
     description: FluxNode identity key in WIF format (51-52 characters).
     required: true
     type: str
-    no_log: true
   tx_id:
     description: Collateral transaction hash (exactly 64 hex characters).
     required: true
@@ -183,6 +180,12 @@ options:
       when UPnP is not used — some daemon versions require the key to be
       present as a string.
     type: str
+  params_source:
+    description: >
+      Where the node fetches fluxd's zk params (C(ip:port)). Unset, it uses Flux's
+      download host. A labnet install names the lab's donor here.
+    type: str
+    version_added: "2.0.0"
   notifications:
     description: >
       Notification configuration dict with optional keys:
@@ -196,12 +199,33 @@ options:
       collateral_pubkey, delegate_private_key_encrypted,
       delegate_private_key, delegate_passphrase.
     type: dict
-    no_log: true
+  chain:
+    description: >
+      The network the node installs onto, fixed at install. Unset, mainnet.
+      A labnet install also sets I(params_source).
+    type: dict
+    version_added: "2.0.0"
+    suboptions:
+      network:
+        description: Network to install onto.
+        type: str
+        default: mainnet
+        choices: [mainnet, labnet]
+      key:
+        description: >
+          The lab's compressed public key (66 hex characters, 02 or 03 prefix).
+          Required when I(network=labnet).
+        type: str
+      update_url:
+        description: >
+          The lab's CDN, read by the node's updater (e.g., http://cdn.lab/arcane).
+          Required when I(network=labnet).
+        type: str
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 4.0.0"
+  - "arcane-mage >= 5.0.1"
 author:
-  - RunOnFlux
+  - RunOnFlux (@RunOnFlux)
 """
 
 EXAMPLES = r"""
@@ -230,6 +254,27 @@ EXAMPLES = r"""
     ip_address: "49.12.156.226/27"
     gateway: "49.12.156.225"
     start: true
+  delegate_to: localhost
+
+- name: Provision a labnet node
+  runonflux.arcane_mage.provision:
+    api_url: "https://192.168.1.100:8006"
+    api_token: "{{ proxmox_token }}"
+    node: pve1
+    vm_name: lab-cumulus-01
+    node_tier: cumulus
+    network: vmbr0
+    iso_name: "{{ flux_iso }}"
+    hostname: lab-cumulus-01
+    flux_id: "{{ flux_id }}"
+    identity_key: "{{ identity_key }}"
+    tx_id: "{{ tx_id }}"
+    output_id: 0
+    params_source: "25.47.0.1:16127"
+    chain:
+      network: labnet
+      key: "{{ lab_public_key }}"
+      update_url: "http://cdn.lab/arcane"
   delegate_to: localhost
 
 - name: Provision with DHCP (minimal config)
@@ -266,8 +311,18 @@ provisioning_log:
 """
 
 import asyncio
+import traceback
 
 from ansible.module_utils.basic import AnsibleModule
+
+from ansible_collections.runonflux.arcane_mage.plugins.module_utils.library import require_arcane_mage
+
+try:
+    from arcane_mage import ArcaneOsConfig, HashedPassword, Provisioner, ProxmoxApi
+
+    IMPORT_ERROR = None
+except ImportError:
+    IMPORT_ERROR = traceback.format_exc()
 
 
 def build_config_dict(params):
@@ -290,6 +345,8 @@ def build_config_dict(params):
         network["upnp_port"] = params["upnp_port"]
     if params.get("router_address") is not None:
         network["router_address"] = params["router_address"]
+    if params.get("params_source"):
+        network["params_source"] = params["params_source"]
     if network:
         fluxnode["network"] = network
 
@@ -300,6 +357,10 @@ def build_config_dict(params):
     # Delegate
     if params.get("delegate"):
         fluxnode["delegate"] = params["delegate"]
+
+    # Chain
+    if params.get("chain"):
+        fluxnode["chain"] = params["chain"]
 
     # System
     system = {
@@ -370,8 +431,6 @@ def build_config_dict(params):
 
 async def run_provision(params):
     """Execute the provisioning workflow."""
-    from arcane_mage import ArcaneOsConfig, HashedPassword, Provisioner, ProxmoxApi
-
     token = ProxmoxApi.parse_token(params["api_token"])
     if not token:
         return False, None, ["Invalid API token format. Expected: user@realm!tokenname=tokenvalue"]
@@ -452,6 +511,7 @@ def main():
         ssh_pubkey=dict(type="str"),
         ssh_keys=dict(
             type="dict",
+            no_log=False,
             options=dict(
                 operate=dict(type="list", elements="str", default=[]),
                 status=dict(type="list", elements="str", default=[]),
@@ -469,8 +529,18 @@ def main():
         dns=dict(type="list", elements="str", default=["1.1.1.1", "8.8.8.8"]),
         upnp_port=dict(type="int"),
         router_address=dict(type="str"),
+        params_source=dict(type="str"),
         notifications=dict(type="dict", default={}),
         delegate=dict(type="dict", no_log=True),
+        chain=dict(
+            type="dict",
+            options=dict(
+                network=dict(type="str", default="mainnet", choices=["mainnet", "labnet"]),
+                key=dict(type="str", no_log=False),
+                update_url=dict(type="str"),
+            ),
+            required_if=[("network", "labnet", ["key", "update_url"])],
+        ),
     )
 
     module = AnsibleModule(
@@ -481,6 +551,8 @@ def main():
         supports_check_mode=True,
     )
 
+    require_arcane_mage(module, IMPORT_ERROR)
+
     if module.check_mode:
         module.exit_json(
             changed=False,
@@ -490,8 +562,6 @@ def main():
 
     try:
         success, vm_id, log_messages = asyncio.run(run_provision(module.params))
-    except ImportError:
-        module.fail_json(msg="arcane-mage library is not installed. Install with: pip install arcane-mage")
     except Exception as e:
         module.fail_json(msg=f"Provisioning error: {e}")
 

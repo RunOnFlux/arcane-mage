@@ -1,0 +1,32 @@
+name: Publish Ansible collection
+
+on:
+  push:
+    tags: ["collection-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible_collections/runonflux/arcane_mage
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: The tag names the version in galaxy.yml
+        run: |
+          version="$(uv run python -c 'import yaml; print(yaml.safe_load(open("galaxy.yml"))["version"])')"
+          test "$GITHUB_REF_NAME" = "collection-v$version"
+      - run: uv run ansible-galaxy collection build --output-path "$RUNNER_TEMP"
+      - run: uv run ansible-galaxy collection publish "$RUNNER_TEMP"/runonflux-arcane_mage-*.tar.gz
+        env:
+          ANSIBLE_GALAXY_SERVER_LIST: release_galaxy
+          ANSIBLE_GALAXY_SERVER_RELEASE_GALAXY_URL: https://galaxy.ansible.com/
+          ANSIBLE_GALAXY_SERVER_RELEASE_GALAXY_TOKEN: ${{ secrets.GALAXY_API_KEY }}

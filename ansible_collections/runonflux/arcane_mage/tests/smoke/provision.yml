@@ -1,0 +1,24 @@
+---
+- name: The modules load and reach the library
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Provision refuses a malformed token before contacting Proxmox
+      runonflux.arcane_mage.provision:
+        api_url: https://proxmox.invalid:8006
+        api_token: not-a-token
+        node: pve1
+        vm_name: smoke
+        node_tier: cumulus
+        network: vmbr0
+        iso_name: FluxLive-1775071308.iso
+        hostname: smoke
+        flux_id: "1111111111111111111111111111111111"
+        identity_key: "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK"
+        tx_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        output_id: 0
+      register: result
+      failed_when: "'Invalid API token format' not in result.provisioning_log[0]"

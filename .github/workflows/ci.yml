@@ -17,7 +17,7 @@ jobs:
         python: ["3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
@@ -27,3 +27,27 @@ jobs:
       - run: uv run ty check
       - run: uv run pytest
       - run: uv build
+
+  collection:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible_collections/runonflux/arcane_mage
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ansible-galaxy collection build --output-path "$RUNNER_TEMP"
+      - run: uv run ansible-test sanity --test validate-modules --python 3.13
+      - run: uv run ansible-playbook tests/smoke/provision.yml
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ${{ github.workspace }}
+      - name: Galaxy's importer passes without warnings
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -o pipefail
+          uvx --from galaxy-importer python -m galaxy_importer.main runonflux-arcane_mage-*.tar.gz | tee importer.log
+          ! grep -E 'WARNING|ERROR' importer.log

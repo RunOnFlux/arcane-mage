@@ -1,0 +1,4 @@
+---
+# Adds the collection's ansible-core floor to the versions ansible-lint treats as supported.
+supported_ansible_also:
+  - "2.22."
