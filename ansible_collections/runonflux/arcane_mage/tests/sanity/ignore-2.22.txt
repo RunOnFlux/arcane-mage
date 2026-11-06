@@ -1,0 +1,5 @@
+plugins/modules/deprovision.py validate-modules:missing-gplv3-license # Licensed under BlueOak-1.0.0
+plugins/modules/iso_info.py validate-modules:missing-gplv3-license # Licensed under BlueOak-1.0.0
+plugins/modules/provision.py validate-modules:missing-gplv3-license # Licensed under BlueOak-1.0.0
+plugins/modules/status.py validate-modules:missing-gplv3-license # Licensed under BlueOak-1.0.0
+plugins/modules/validate.py validate-modules:missing-gplv3-license # Licensed under BlueOak-1.0.0

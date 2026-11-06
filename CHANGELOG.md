@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **License**: arcane-mage and the Ansible collection are under the Blue Oak Model License 1.0.0 (`BlueOak-1.0.0`). The collection carries its own `LICENSE`.
+- **Ansible collection 2.0.0**: needs ansible-core 2.22 and arcane-mage 5.0.1, and a task fails with both versions named when the library is missing or older. The source moved to `ansible_collections/`, so `collections_path` points at the repository root. Releases publish to Ansible Galaxy from `collection-v*` tags.
+
+### Added
+
+- **Labnet installs from Ansible**: the `provision` module takes `chain` and `params_source`.
+
 ## 5.0.1
 
 ### Changed

@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 # Copyright: (c) 2025, RunOnFlux
-# License: MIT
+# License: BlueOak-1.0.0
 
 DOCUMENTATION = r"""
 ---
@@ -21,7 +21,6 @@ options:
     description: Proxmox API token in format C(user@realm!tokenname=tokenvalue).
     required: true
     type: str
-    no_log: true
   verify_ssl:
     description: Whether to verify SSL certificates.
     type: bool
@@ -38,9 +37,9 @@ options:
     type: int
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 4.0.0"
+  - "arcane-mage >= 5.0.1"
 author:
-  - RunOnFlux
+  - RunOnFlux (@RunOnFlux)
 """
 
 EXAMPLES = r"""
@@ -70,14 +69,22 @@ deprovision_log:
 """
 
 import asyncio
+import traceback
 
 from ansible.module_utils.basic import AnsibleModule
+
+from ansible_collections.runonflux.arcane_mage.plugins.module_utils.library import require_arcane_mage
+
+try:
+    from arcane_mage import Provisioner, ProxmoxApi
+
+    IMPORT_ERROR = None
+except ImportError:
+    IMPORT_ERROR = traceback.format_exc()
 
 
 async def run_deprovision(params):
     """Execute the deprovisioning workflow."""
-    from arcane_mage import Provisioner, ProxmoxApi
-
     token = ProxmoxApi.parse_token(params["api_token"])
     if not token:
         return False, ["Invalid API token format. Expected: user@realm!tokenname=tokenvalue"]
@@ -136,13 +143,13 @@ def main():
         supports_check_mode=True,
     )
 
+    require_arcane_mage(module, IMPORT_ERROR)
+
     if module.check_mode:
         module.exit_json(changed=False, deprovision_log=["Check mode — no changes made"])
 
     try:
         success, log_messages = asyncio.run(run_deprovision(module.params))
-    except ImportError:
-        module.fail_json(msg="arcane-mage library is not installed. Install with: pip install arcane-mage")
     except Exception as e:
         module.fail_json(msg=f"Deprovision error: {e}")
 

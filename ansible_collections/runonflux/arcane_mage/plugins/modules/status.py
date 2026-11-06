@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 # Copyright: (c) 2025, RunOnFlux
-# License: MIT
+# License: BlueOak-1.0.0
 
 DOCUMENTATION = r"""
 ---
@@ -20,7 +20,6 @@ options:
     description: Proxmox API token in format C(user@realm!tokenname=tokenvalue).
     required: true
     type: str
-    no_log: true
   verify_ssl:
     description: Whether to verify SSL certificates.
     type: bool
@@ -37,9 +36,9 @@ options:
     type: int
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 4.0.0"
+  - "arcane-mage >= 5.0.1"
 author:
-  - RunOnFlux
+  - RunOnFlux (@RunOnFlux)
 """
 
 EXAMPLES = r"""
@@ -94,14 +93,22 @@ vms:
 """
 
 import asyncio
+import traceback
 
 from ansible.module_utils.basic import AnsibleModule
+
+from ansible_collections.runonflux.arcane_mage.plugins.module_utils.library import require_arcane_mage
+
+try:
+    from arcane_mage import ProxmoxApi
+
+    IMPORT_ERROR = None
+except ImportError:
+    IMPORT_ERROR = traceback.format_exc()
 
 
 async def run_status(params):
     """Fetch VM status from Proxmox."""
-    from arcane_mage import ProxmoxApi
-
     token = ProxmoxApi.parse_token(params["api_token"])
     if not token:
         return False, [], "Invalid API token format"
@@ -135,10 +142,10 @@ def main():
 
     module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
 
+    require_arcane_mage(module, IMPORT_ERROR)
+
     try:
         success, vms, error = asyncio.run(run_status(module.params))
-    except ImportError:
-        module.fail_json(msg="arcane-mage library is not installed. Install with: pip install arcane-mage")
     except Exception as e:
         module.fail_json(msg=f"Status check error: {e}")
 

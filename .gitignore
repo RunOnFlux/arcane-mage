@@ -16,3 +16,6 @@ fluxnodes*.yaml
 .DS_Store
 .ruff_cache
 *.log
+
+# ansible-test results
+ansible_collections/**/tests/output/

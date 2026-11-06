@@ -271,7 +271,7 @@ Arcane Mage uses your system's secure keyring to store API credentials, with a b
 
 ### Ansible
 
-The `runonflux.arcane_mage` collection wraps validation, provisioning, status, deprovisioning and ISO lookup as Ansible modules. See [ansible_collection/runonflux/arcane_mage/README.md](ansible_collection/runonflux/arcane_mage/README.md).
+The `runonflux.arcane_mage` collection wraps validation, provisioning, status, deprovisioning and ISO lookup as Ansible modules. See [ansible_collections/runonflux/arcane_mage/README.md](ansible_collections/runonflux/arcane_mage/README.md).
 
 ### Contributing
 
