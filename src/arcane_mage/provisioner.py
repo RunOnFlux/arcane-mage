@@ -26,6 +26,9 @@ MIN_IMPORT_STORAGE_BYTES = 10 * 1024 * 1024  # 10 MiB
 # outlast a create on a busy host: allocating the disks and importing the images can take
 # minutes.
 CREATE_TASK_MAX_WAIT_S = 600
+# Proxmox's cluster/nextid reports a free id without reserving it; a create that loses the
+# id to a concurrent create asks again, up to this many times.
+CREATE_ID_ATTEMPTS = 10
 UPLOAD_TASK_MAX_WAIT_S = 120
 DELETE_TASK_MAX_WAIT_S = 10
 
@@ -77,13 +80,20 @@ class VmConfig:
     scsihw: str
     vga: str
     serial0: str
+    # The name this install's uploaded images carry (`install_image_names`), independent of
+    # the VM id, so concurrent installs never share an image.
+    install_id: str
     startup: str | None = None
     tags: str | None = None
     description: str | None = None
+    # The id came from cluster/nextid: `Provisioner.create_vm` may take another when a
+    # concurrent create claims it first. A caller-chosen id is never changed.
+    vmid_assigned: bool = False
 
     def to_proxmox_dict(self) -> dict:
         """Convert to the dict format Proxmox API expects."""
         result = asdict(self)
+        del result["install_id"], result["vmid_assigned"]
         return {k: v for k, v in result.items() if v is not None}
 
 
@@ -110,14 +120,25 @@ def is_api_min_version(version: str) -> bool:
     return True
 
 
-def _get_vm_config_file_name(vm_id: int) -> str:
-    return f"{vm_id}_{_config_image_base}.raw"
+def new_install_id() -> str:
+    """A name for one install's uploaded images, unique to it."""
+    return uuid.uuid4().hex
 
 
-# Each VM imports its own EFI image, so runs that share an import storage never delete
-# an image another run is still importing.
-def _get_vm_efi_file_name(vm_id: int) -> str:
-    return f"{vm_id}_arcane_efi.raw"
+def _get_vm_config_file_name(install_id: str) -> str:
+    return f"{install_id}_{_config_image_base}.raw"
+
+
+# Each install imports its own EFI image, so installs that share an import storage never
+# delete or replace an image another install is still importing.
+def _get_vm_efi_file_name(install_id: str) -> str:
+    return f"{install_id}_arcane_efi.raw"
+
+
+def _id_taken(error: str | None) -> bool:
+    """Proxmox refuses a create whose id another VM or container holds with
+    `unable to create VM <id> - VM <id> already exists on node '<node>'`."""
+    return error is not None and "already exists on node" in error
 
 
 async def get_latest_iso_version() -> str | None:
@@ -576,20 +597,39 @@ class Provisioner:
         return await self._await_task(res, node, 20)
 
     async def create_vm(self, config: VmConfig, node: str) -> TaskOutcome:
-        """Create a VM and wait for the task to complete."""
-        create_res = await self.api.create_vm(config.to_proxmox_dict(), node)
+        """Create a VM and wait for the task to complete.
+
+        Proxmox claims the id atomically when it accepts the create. When `config.vmid_assigned`
+        and another VM or container holds the id, the create is retried with the next free id;
+        `config.vmid` holds the id the VM was created with.
+        """
+        for _ in range(CREATE_ID_ATTEMPTS):
+            create_res = await self.api.create_vm(config.to_proxmox_dict(), node)
+
+            if create_res or not config.vmid_assigned or not _id_taken(create_res.error):
+                break
+
+            next_res = await self.api.get_next_id()
+
+            if not next_res:
+                return TaskOutcome(error=f"VM {config.vmid} is taken; no next id ({next_res.reason})")
+
+            log.info("VM id %s is taken; creating as %s", config.vmid, next_res.payload)
+            config.vmid = next_res.payload
 
         if not create_res:
             log.error("VM creation failed: status=%s error=%s", create_res.status, create_res.error)
 
         return await self._await_task(create_res, node, CREATE_TASK_MAX_WAIT_S)
 
-    async def delete_install_disks(self, vm_id: int, node: str, storage: str, delete_efi: bool = True) -> TaskOutcome:
-        """Delete the VM's config image, and its EFI image unless `delete_efi` is False, one
-        after the other. Each is attempted; the outcome names the first that failed and why."""
-        images = [_get_vm_config_file_name(vm_id)]
+    async def delete_install_disks(
+        self, install_id: str, node: str, storage: str, delete_efi: bool = True
+    ) -> TaskOutcome:
+        """Delete the install's config image, and its EFI image unless `delete_efi` is False,
+        one after the other. Each is attempted; the outcome names the first that failed and why."""
+        images = [_get_vm_config_file_name(install_id)]
         if delete_efi:
-            images.insert(0, _get_vm_efi_file_name(vm_id))
+            images.insert(0, _get_vm_efi_file_name(install_id))
 
         failed: TaskOutcome | None = None
         for image in images:
@@ -600,8 +640,8 @@ class Provisioner:
 
         return failed if failed is not None else TaskOutcome()
 
-    async def upload_arcane_efi(self, vm_id: int, node: str, storage: str) -> TaskOutcome:
-        """Upload the VM's EFI bootloader image to the hypervisor."""
+    async def upload_arcane_efi(self, install_id: str, node: str, storage: str) -> TaskOutcome:
+        """Upload the install's EFI bootloader image to the hypervisor."""
         with _efi_gz_resource.open("rb") as f:
             efi_disk = gzip.decompress(f.read())
 
@@ -609,15 +649,16 @@ class Provisioner:
             efi_disk,
             node=node,
             storage=storage,
-            file_name=_get_vm_efi_file_name(vm_id),
+            file_name=_get_vm_efi_file_name(install_id),
         )
 
         return await self._await_task(upload_res, node, UPLOAD_TASK_MAX_WAIT_S)
 
-    async def upload_arcane_config(self, config: bytes, vm_id: int, node: str, storage: str) -> TaskOutcome:
-        """Write node config into a FAT image and upload to the hypervisor."""
+    async def upload_arcane_config(self, config: bytes, install_id: str, node: str, storage: str) -> TaskOutcome:
+        """Write node config into a FAT image and upload it to the hypervisor as the install's
+        config image."""
         with tempfile.TemporaryDirectory(prefix="arcane_mage_") as tmpdir:
-            config_image_name = _get_vm_config_file_name(vm_id)
+            config_image_name = _get_vm_config_file_name(install_id)
             config_image_path = Path(tmpdir) / config_image_name
 
             # Extract and decompress the config image template
@@ -655,11 +696,14 @@ class Provisioner:
         cpu_limit: float | None = None,
         network_limit: int | None = None,
     ) -> VmConfig | None:
-        """Generate the Proxmox VM configuration for a given tier."""
+        """Generate the Proxmox VM configuration for a given tier, its install images named by a
+        new install id. Without `vm_id`, the id is the next free one (`vmid_assigned`)."""
         tier_config = TIER_CONFIG.get(tier)
 
         if not tier_config:
             return None
+
+        vmid_assigned = vm_id is None
 
         if vm_id is None:
             vm_id_res = await self.api.get_next_id()
@@ -674,8 +718,9 @@ class Provisioner:
         cpu_limit = cpu_limit or 0
 
         smbios_uuid = str(uuid.uuid4())
-        config_img = _get_vm_config_file_name(vm_id)
-        efi_img = _get_vm_efi_file_name(vm_id)
+        install_id = new_install_id()
+        config_img = _get_vm_config_file_name(install_id)
+        efi_img = _get_vm_efi_file_name(install_id)
 
         return VmConfig(
             efidisk0=(
@@ -706,9 +751,11 @@ class Provisioner:
             # first serial port (the xterm.js console).
             vga="std,clipboard=vnc",
             serial0="socket",
+            install_id=install_id,
             startup=startup_config,
             tags=tags,
             description=description,
+            vmid_assigned=vmid_assigned,
         )
 
     async def provision_node(
@@ -723,8 +770,8 @@ class Provisioner:
             callback: Optional progress callback receiving (success, message).
 
         Returns:
-            True if provisioning succeeded, False otherwise. Once the VM's id is
-            known, `fluxnode.hypervisor.vm_id` holds it, an assigned id included.
+            True if provisioning succeeded, False otherwise. Once the VM is created,
+            `fluxnode.hypervisor.vm_id` holds its id, an assigned id included.
         """
 
         def _cb(ok: bool, msg: str) -> None:
@@ -805,25 +852,26 @@ class Provisioner:
             _cb(False, "Unable to generate vm config")
             return False
 
-        vm_id = vm_config.vmid
-        hv.vm_id = vm_id
+        install_id = vm_config.install_id
 
         config_upload = yaml.dump({"nodes": [fluxnode.to_dict()]})
 
-        config_ok = await self.upload_arcane_config(config_upload.encode("utf-8"), vm_id, hv.node, hv.storage_import)
+        config_ok = await self.upload_arcane_config(
+            config_upload.encode("utf-8"), install_id, hv.node, hv.storage_import
+        )
 
         # An upload whose wait failed can still have landed its file.
         if not config_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import, delete_efi=False)
+            await self.delete_install_disks(install_id, hv.node, hv.storage_import, delete_efi=False)
             _cb(False, f"Unable to upload Config image to hypervisor: {config_ok.error}")
             return False
 
         _cb(True, "Config image uploaded")
 
-        efi_ok = await self.upload_arcane_efi(vm_id, hv.node, hv.storage_import)
+        efi_ok = await self.upload_arcane_efi(install_id, hv.node, hv.storage_import)
 
         if not efi_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
+            await self.delete_install_disks(install_id, hv.node, hv.storage_import)
             _cb(False, f"Unable to upload EFI image to hypervisor: {efi_ok.error}")
             return False
 
@@ -832,13 +880,15 @@ class Provisioner:
         created_ok = await self.create_vm(vm_config, node=hv.node)
 
         if not created_ok:
-            await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
+            await self.delete_install_disks(install_id, hv.node, hv.storage_import)
             _cb(False, f"Unable to create VM on hypervisor: {created_ok.error}")
             return False
 
-        _cb(True, "VM Created")
+        vm_id = vm_config.vmid
+        hv.vm_id = vm_id
+        _cb(True, f"VM Created (id={vm_id})")
 
-        deleted_ok = await self.delete_install_disks(vm_id, hv.node, hv.storage_import)
+        deleted_ok = await self.delete_install_disks(install_id, hv.node, hv.storage_import)
 
         if not deleted_ok:
             _cb(False, f"Unable to clean up disk images on hypervisor: {deleted_ok.error}")
