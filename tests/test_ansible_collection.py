@@ -82,13 +82,13 @@ def test_missing_library_fails_the_task(module):
 
 
 def test_older_library_fails_the_task(module):
-    with patch.object(library, "version", return_value="5.0.0"), pytest.raises(FailJson):
+    with patch.object(library, "version", return_value="5.0.2"), pytest.raises(FailJson):
         library.require_arcane_mage(module, None)
 
-    assert "found 5.0.0" in module.fail_json.call_args.kwargs["msg"]
+    assert "found 5.0.2" in module.fail_json.call_args.kwargs["msg"]
 
 
-@pytest.mark.parametrize("installed", ["5.0.1", "5.0.10", "6.0.0"])
+@pytest.mark.parametrize("installed", ["6.0.0", "6.0.10", "7.0.0"])
 def test_current_library_passes(module, installed):
     with patch.object(library, "version", return_value=installed):
         library.require_arcane_mage(module, None)

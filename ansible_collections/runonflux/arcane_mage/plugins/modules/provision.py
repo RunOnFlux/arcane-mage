@@ -223,7 +223,7 @@ options:
         type: str
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 5.0.1"
+  - "arcane-mage >= 6.0.0"
 author:
   - RunOnFlux (@RunOnFlux)
 """
@@ -469,16 +469,9 @@ async def run_provision(params):
         provisioner = Provisioner(api, force_standalone=params["force_standalone"])
         success = await provisioner.provision_node(config, callback=callback)
 
-        if success and config.hypervisor:
-            # Get the VM ID from Proxmox
-            vms_res = await api.get_vms(params["node"])
-            if vms_res:
-                vm = next(
-                    (v for v in vms_res.payload if v.get("name") == params["vm_name"]),
-                    None,
-                )
-                if vm:
-                    vm_id = vm.get("vmid")
+        # provision_node records the id the VM was created with.
+        if config.hypervisor:
+            vm_id = config.hypervisor.vm_id
 
     return success, vm_id, log_messages
 

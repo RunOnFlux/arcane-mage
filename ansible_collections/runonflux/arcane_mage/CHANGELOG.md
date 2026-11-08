@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0
+
+### Changed
+
+- Needs arcane-mage 6.0.0: two `provision` tasks started together on one hypervisor each get their own VM id and their own install images.
+- `provision` returns the id the VM was created with, from arcane-mage, not a lookup by name afterwards.
+
 ## 2.0.0
 
 ### Breaking Changes

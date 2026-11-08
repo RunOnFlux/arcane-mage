@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.0.0
+
+### Breaking Changes
+
+- **Install images are named by install, not by VM id**: `create_vm_config` gives each VM config a new `install_id`, and the config and EFI images it imports are `<install_id>_arcane_config.raw` and `<install_id>_arcane_efi.raw`. `upload_arcane_config`, `upload_arcane_efi` and `delete_install_disks` take that `install_id` where they took the VM id. Concurrent installs on one hypervisor never share an image.
+
+### Fixed
+
+- **A VM id another create claims first is retried**: Proxmox's `cluster/nextid` reserves nothing, so two installs started together could be given the same id. `create_vm` now retries a create refused because its assigned id is taken, with the next free id (up to 10 times), and `config.vmid` (and `provision_node`'s `hypervisor.vm_id`) holds the id the VM was created with. An id the caller chose (`vm_id`) is never replaced. `VmConfig.vmid_assigned` says which.
+
 ## 5.0.2
 
 ### Changed

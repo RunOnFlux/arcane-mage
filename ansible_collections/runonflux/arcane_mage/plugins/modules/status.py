@@ -36,7 +36,7 @@ options:
     type: int
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 5.0.1"
+  - "arcane-mage >= 6.0.0"
 author:
   - RunOnFlux (@RunOnFlux)
 """

@@ -225,13 +225,36 @@ class TestProvisionerValidation:
         assert "description" not in api
         assert api["memory"] == TIER_CONFIG["cumulus"]["memory_mb"]
 
-    async def test_a_vm_imports_its_own_efi_image(self, provisioner: Provisioner, mock_api: AsyncMock):
+    async def test_a_vm_imports_its_installs_own_images(self, provisioner: Provisioner, mock_api: AsyncMock):
         mock_api.get_next_id.return_value = ApiSuccess(payload=100)
 
         config = await provisioner.create_vm_config(vm_name="test-vm", tier="cumulus", network_bridge="vmbr0")
 
         assert config is not None
-        assert config.efidisk0.endswith("import-from=local:import/100_arcane_efi.raw")
+        assert config.efidisk0.endswith(f"import-from=local:import/{config.install_id}_arcane_efi.raw")
+        assert config.scsi1.endswith(f"import-from=local:import/{config.install_id}_arcane_config.raw")
+        assert "install_id" not in config.to_proxmox_dict()
+        assert "vmid_assigned" not in config.to_proxmox_dict()
+
+    async def test_two_installs_given_one_id_never_share_an_image(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=104)
+
+        first = await provisioner.create_vm_config(vm_name="a", tier="cumulus", network_bridge="vmbr0")
+        second = await provisioner.create_vm_config(vm_name="b", tier="cumulus", network_bridge="vmbr0")
+
+        assert first is not None and second is not None
+        assert first.vmid == second.vmid == 104
+        assert first.efidisk0 != second.efidisk0
+        assert first.scsi1 != second.scsi1
+
+    async def test_only_an_id_from_nextid_is_assigned(self, provisioner: Provisioner, mock_api: AsyncMock):
+        mock_api.get_next_id.return_value = ApiSuccess(payload=100)
+
+        chosen = await provisioner.create_vm_config(vm_name="a", tier="cumulus", network_bridge="vmbr0", vm_id=200)
+        assigned = await provisioner.create_vm_config(vm_name="b", tier="cumulus", network_bridge="vmbr0")
+
+        assert chosen is not None and assigned is not None
+        assert (chosen.vmid_assigned, assigned.vmid_assigned) == (False, True)
 
     async def test_create_vm_config_invalid_tier(self, provisioner: Provisioner, mock_api: AsyncMock):
         config = await provisioner.create_vm_config(
@@ -280,10 +303,10 @@ class TestProvisionerValidation:
         mock_api.delete_file.side_effect = [ApiSuccess(payload="UPID:efi"), ApiSuccess(payload="UPID:cfg")]
         mock_api.wait_for_task.return_value = TaskOutcome()
 
-        assert await provisioner.delete_install_disks(104, "node1", "local")
+        assert await provisioner.delete_install_disks("4f2a", "node1", "local")
         assert [c.args[0] for c in mock_api.delete_file.call_args_list] == [
-            "104_arcane_efi.raw",
-            "104_arcane_config.raw",
+            "4f2a_arcane_efi.raw",
+            "4f2a_arcane_config.raw",
         ]
         assert [c.args[0] for c in mock_api.wait_for_task.call_args_list] == ["UPID:efi", "UPID:cfg"]
 
@@ -296,9 +319,9 @@ class TestProvisionerValidation:
         ]
         mock_api.wait_for_task.return_value = TaskOutcome()
 
-        result = await provisioner.delete_install_disks(104, "node1", "local")
+        result = await provisioner.delete_install_disks("4f2a", "node1", "local")
 
-        assert result.error == "104_arcane_config.raw: HTTP 500: starting worker failed: example"
+        assert result.error == "4f2a_arcane_config.raw: HTTP 500: starting worker failed: example"
 
     async def test_a_failed_efi_delete_still_deletes_the_config_image(
         self, provisioner: Provisioner, mock_api: AsyncMock
@@ -309,9 +332,9 @@ class TestProvisionerValidation:
         ]
         mock_api.wait_for_task.return_value = TaskOutcome()
 
-        result = await provisioner.delete_install_disks(104, "node1", "local")
+        result = await provisioner.delete_install_disks("4f2a", "node1", "local")
 
-        assert result.error == "104_arcane_efi.raw: HTTP 500: starting worker failed: example"
+        assert result.error == "4f2a_arcane_efi.raw: HTTP 500: starting worker failed: example"
         assert mock_api.delete_file.call_count == 2
 
     async def test_deprovision_node_success(self, provisioner: Provisioner, mock_api: AsyncMock):
@@ -495,14 +518,47 @@ class TestProvisionFailureReasons:
         assert await self.failures(provisioner) == [
             "Unable to upload Config image to hypervisor: task status unreadable (request timed out)"
         ]
-        assert [c.args[0] for c in mock_api.delete_file.call_args_list] == ["264_arcane_config.raw"]
+        uploaded = mock_api.upload_file.call_args_list[0].args[0].name
+        assert uploaded.endswith("_arcane_config.raw")
+        assert [c.args[0] for c in mock_api.delete_file.call_args_list] == [uploaded]
 
     async def test_a_run_uploads_and_deletes_only_its_own_images(self, provisioner: Provisioner, mock_api: AsyncMock):
         assert await provisioner.provision_node(self.fluxnode())
 
-        assert mock_api.upload_file.call_args_list[1].kwargs["file_name"] == "264_arcane_efi.raw"
+        config_image = mock_api.upload_file.call_args_list[0].args[0].name
+        install_id = config_image.removesuffix("_arcane_config.raw")
+        assert mock_api.upload_file.call_args_list[1].kwargs["file_name"] == f"{install_id}_arcane_efi.raw"
         deleted = sorted(c.args[0] for c in mock_api.delete_file.call_args_list)
-        assert deleted == ["264_arcane_config.raw", "264_arcane_efi.raw"]
+        assert deleted == [f"{install_id}_arcane_config.raw", f"{install_id}_arcane_efi.raw"]
+
+    async def test_an_assigned_id_another_create_took_is_retried_with_the_next(
+        self, provisioner: Provisioner, mock_api: AsyncMock
+    ):
+        node = self.fluxnode()
+        node.hypervisor.vm_id = None
+        mock_api.get_next_id.side_effect = [ApiSuccess(payload=264), ApiSuccess(payload=265)]
+        mock_api.create_vm.side_effect = [
+            ApiFailure(status=500, error="unable to create VM 264 - VM 264 already exists on node 'pve1'"),
+            ApiSuccess(payload="UPID:create"),
+        ]
+
+        assert await provisioner.provision_node(node)
+
+        sent = [c.args[0] for c in mock_api.create_vm.call_args_list]
+        assert [s["vmid"] for s in sent] == [264, 265]
+        assert sent[0]["scsi1"] == sent[1]["scsi1"]
+        assert sent[0]["efidisk0"] == sent[1]["efidisk0"]
+        assert mock_api.upload_file.await_count == 2
+        assert node.hypervisor.vm_id == 265
+        mock_api.start_vm.assert_awaited_once_with(265, "pve1")
+
+    async def test_a_chosen_id_another_vm_holds_is_never_replaced(self, provisioner: Provisioner, mock_api: AsyncMock):
+        taken = "unable to create VM 264 - VM 264 already exists on node 'pve1'"
+        mock_api.create_vm.return_value = ApiFailure(status=500, error=taken)
+
+        assert await self.failures(provisioner) == [f"Unable to create VM on hypervisor: HTTP 500: {taken}"]
+        assert mock_api.create_vm.await_count == 1
+        mock_api.get_next_id.assert_not_awaited()
 
     async def test_a_standalone_host_adds_no_step(self, provisioner: Provisioner):
         steps: list[str] = []
