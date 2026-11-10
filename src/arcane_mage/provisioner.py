@@ -746,10 +746,11 @@ class Provisioner:
             ide2=f"{storage_iso}:iso/{iso_name},media=cdrom",
             net0=f"model=virtio,bridge={network_bridge}{network_rate}",
             scsihw="virtio-scsi-single",
-            # The node's console offers text to the viewer's clipboard (Proxmox's
+            # virtio-gpu: the console's X pointer is drawn on the cursor plane, not into the
+            # frame. The node's console offers text to the viewer's clipboard (Proxmox's
             # "Clipboard: VNC", PVE 8.2+, below MIN_API_VERSION) and writes it to its
             # first serial port (the xterm.js console).
-            vga="std,clipboard=vnc",
+            vga="virtio,clipboard=vnc",
             serial0="socket",
             install_id=install_id,
             startup=startup_config,

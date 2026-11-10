@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.0
+
+### Changed
+
+- Needs arcane-mage 6.1.0: a VM `provision` creates has a virtio-gpu display (`vga: virtio,clipboard=vnc`).
+
 ## 2.1.0
 
 ### Changed

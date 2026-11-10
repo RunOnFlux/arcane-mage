@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.1.0
+
+### Changed
+
+- **A node's VM has a virtio-gpu display** (`vga: virtio,clipboard=vnc`): the console's X pointer is drawn on the cursor plane, so a screen capture of the console (Proxmox's screendump) carries no pointer over the text. The VNC clipboard is unchanged.
+
 ## 6.0.0
 
 ### Breaking Changes

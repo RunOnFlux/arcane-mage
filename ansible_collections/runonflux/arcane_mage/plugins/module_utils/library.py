@@ -6,7 +6,7 @@ from importlib.metadata import version
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 from ansible.module_utils.compat.version import LooseVersion
 
-MINIMUM_VERSION = "6.0.0"
+MINIMUM_VERSION = "6.1.0"
 
 
 def require_arcane_mage(module: AnsibleModule, import_error: str | None) -> None:
