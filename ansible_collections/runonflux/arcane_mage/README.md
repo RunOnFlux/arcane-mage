@@ -6,7 +6,7 @@ Ansible collection for provisioning ArcaneOS FluxNodes on Proxmox hypervisors us
 
 - Python >= 3.13 on the Ansible controller
 - ansible-core >= 2.22.0
-- `arcane-mage >= 6.0.0` (`pip install "arcane-mage>=6.0.0"`) in the Python that runs the modules
+- `arcane-mage >= 6.1.0` (`pip install "arcane-mage>=6.1.0"`) in the Python that runs the modules
 - Proxmox VE >= 8.4.1
 - Proxmox API token with appropriate permissions
 
@@ -14,7 +14,7 @@ Ansible collection for provisioning ArcaneOS FluxNodes on Proxmox hypervisors us
 
 ```bash
 ansible-galaxy collection install runonflux.arcane_mage
-pip install "arcane-mage>=6.0.0"
+pip install "arcane-mage>=6.1.0"
 ```
 
 ### From source (development)
