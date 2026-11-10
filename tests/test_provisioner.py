@@ -190,7 +190,7 @@ class TestProvisionerValidation:
 
         assert config is not None
         api = config.to_proxmox_dict()
-        assert api["vga"] == "std,clipboard=vnc"
+        assert api["vga"] == "virtio,clipboard=vnc"
         assert api["serial0"] == "socket"
 
     async def test_create_vm_config_tags_description_and_memory(self, provisioner: Provisioner, mock_api: AsyncMock):
