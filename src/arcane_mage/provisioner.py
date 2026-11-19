@@ -784,6 +784,10 @@ class Provisioner:
         if not hv:
             return False
 
+        if problem := fluxnode.system.console_problem:
+            _cb(False, problem)
+            return False
+
         if hv.node_tier not in TIER_CONFIG:
             _cb(False, f"Node tier: {hv.node_tier} does not exist")
             return False

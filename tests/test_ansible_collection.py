@@ -38,6 +38,8 @@ def params(**overrides):
         "storage_import": "local",
         "start": False,
         "hostname": "node-1",
+        "console_login": True,
+        "console_password": "correct horse battery",
         "keyboard_layout": "us",
         "keyboard_variant": "",
         "flux_id": "1" * 34,
@@ -88,7 +90,7 @@ def test_older_library_fails_the_task(module):
     assert "found 6.0.0" in module.fail_json.call_args.kwargs["msg"]
 
 
-@pytest.mark.parametrize("installed", ["6.1.0", "6.1.10", "7.0.0"])
+@pytest.mark.parametrize("installed", ["6.2.0", "6.2.10", "7.0.0"])
 def test_current_library_passes(module, installed):
     with patch.object(library, "version", return_value=installed):
         library.require_arcane_mage(module, None)

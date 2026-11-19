@@ -32,7 +32,8 @@ class TestSystemConfig:
         config = SystemConfig.from_dict(system_dict)
 
         assert config.hostname == "test-node"
-        assert config.hashed_console == "!"
+        assert config.hashed_console is None
+        assert config.console_login is True
         assert config.ssh_pubkey is None
         assert config.keyboard.layout == "us"
 
@@ -65,5 +66,45 @@ class TestSystemConfig:
         result = config.to_dict()
 
         assert result["hostname"] == "test-node"
-        assert result["hashed_console"] == "!"
+        assert result["hashed_console"] is None
+        assert result["console_login"] is True
         assert "keyboard" in result
+
+
+HASH = "$y$j9T$abcdefghijklmnop$0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+
+
+class TestConsoleLogin:
+    def test_a_node_with_no_password_cannot_be_installed(self, system_dict: dict):
+        config = SystemConfig.from_dict(system_dict)
+
+        assert "No console password" in (config.console_problem or "")
+
+    def test_a_password_hash_is_a_console_login(self, system_dict: dict):
+        config = SystemConfig.from_dict(system_dict | {"hashed_console": HASH})
+
+        assert config.console_problem is None
+        assert config.to_dict()["hashed_console"] == HASH
+
+    def test_no_console_login_is_said_on_purpose(self, system_dict: dict):
+        config = SystemConfig.from_dict(system_dict | {"console_login": False})
+
+        assert config.console_problem is None
+
+    def test_no_console_login_reaches_an_older_iso_as_a_locked_entry(self, system_dict: dict):
+        result = SystemConfig.from_dict(system_dict | {"console_login": False}).to_dict()
+
+        assert result["console_login"] is False
+        assert result["hashed_console"] == "!"
+
+    def test_no_console_login_takes_no_password(self, system_dict: dict):
+        config = SystemConfig.from_dict(system_dict | {"console_login": False, "hashed_console": HASH})
+
+        assert "choose one" in (config.console_problem or "")
+
+    @pytest.mark.parametrize("value", ["!", "*", "", "!locked", "plain-text-password", "$y$bad hash"])
+    def test_a_value_that_sets_no_password_is_no_password(self, system_dict: dict, value: str):
+        config = SystemConfig.from_dict(system_dict | {"hashed_console": value})
+
+        assert config.hashed_console is None
+        assert "No console password" in (config.console_problem or "")

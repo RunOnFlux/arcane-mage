@@ -90,6 +90,7 @@ OS-level configuration for the installed system.
 | `ssh_keys.status` | list of strings | no | `[]` | Status keys: log in as `fluxstatus`, read-only status and benchmarks |
 | `keyboard.layout` | string | no | `us` | Keyboard layout |
 | `keyboard.variant` | string | no | `""` | Keyboard variant |
+| `console_login` | boolean | no | `true` | `false` installs a node with no console login, for good: it takes no console password and is managed over SSH alone |
 
 SSH keys are given by tier in `ssh_keys`. `ssh_pubkey` is one more operate key; ISOs from before
 tiered keys read only `ssh_pubkey`, so set it as well when installing such an ISO. A key goes in one
@@ -105,7 +106,7 @@ system:
       - ssh-ed25519 AAAA... monitoring@grafana
 ```
 
-The console password is set interactively during provisioning (via TUI or prompted by the CLI). It is hashed with Yescrypt before being written to the VM.
+A node with a console login needs a console password: at least 12 characters, no character more than 3 times in a row. The TUI asks for it at provisioning; `arcane-mage provision` takes it from `ARCANE_MAGE_CONSOLE_PASSWORD` or asks at a terminal. It is hashed with Yescrypt before being written to the VM. It cannot be set or changed after the install, so a node is provisioned with a password or, on purpose, with `console_login: false`: provisioning refuses a node that has neither.
 
 ### fluxnode (required)
 

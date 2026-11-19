@@ -1,7 +1,30 @@
+import re
 import secrets
 from dataclasses import dataclass, field
+from itertools import groupby
 
 from pyescrypt import Mode, WrongPassword, WrongPasswordConfiguration, Yescrypt
+
+MIN_PASSWORD_LENGTH = 12
+MAX_REPEATS = 3
+
+# A crypt(3) hash that sets a password: "$<method>$...", in crypt's own characters.
+_CRYPT_HASH = re.compile(r"^\$[A-Za-z0-9./$=,-]+$")
+
+
+def password_problem(password: str) -> str | None:
+    """Why a console password is refused, or None for one that is taken."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Password must be a minimum of {MIN_PASSWORD_LENGTH} characters."
+    if any(len(list(group)) > MAX_REPEATS for _, group in groupby(password)):
+        return f"Only {MAX_REPEATS} consecutive repeat characters allowed."
+    return None
+
+
+def sets_a_password(hashed: str | None) -> bool:
+    """Whether a stored hash is one a password matches: a crypt(3) string. A locked entry
+    ("!", "*"), an empty one and anything else set none."""
+    return bool(hashed) and _CRYPT_HASH.fullmatch(hashed) is not None
 
 
 @dataclass
