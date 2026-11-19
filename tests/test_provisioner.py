@@ -468,6 +468,7 @@ class TestProvisionFailureReasons:
     def fluxnode() -> MagicMock:
         node = MagicMock()
         node.to_dict.return_value = {}
+        node.system.console_problem = None
         hv = node.hypervisor
         hv.node, hv.vm_name, hv.vm_id, hv.node_tier = "pve1", "node-a", 264, "cumulus"
         hv.network, hv.iso_name = "vmbr0", "FluxLive.iso"
@@ -476,6 +477,17 @@ class TestProvisionFailureReasons:
         hv.startup_config = hv.tags = hv.description = None
         hv.start_on_creation = True
         return node
+
+    async def test_a_node_with_no_console_password_is_not_created(self, provisioner: Provisioner, mock_api: AsyncMock):
+        node = self.fluxnode()
+        node.system.console_problem = "No console password: give one"
+        failed: list[str] = []
+
+        ok = await provisioner.provision_node(node, lambda good, msg: None if good else failed.append(msg))
+
+        assert ok is False
+        assert failed == ["No console password: give one"]
+        mock_api.create_vm.assert_not_called()
 
     async def failures(self, provisioner: Provisioner) -> list[str]:
         failed: list[str] = []

@@ -16,9 +16,45 @@
         network: vmbr0
         iso_name: FluxLive-1775071308.iso
         hostname: smoke
+        console_password: correct horse battery
         flux_id: "1111111111111111111111111111111111"
         identity_key: "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK"
         tx_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         output_id: 0
       register: result
       failed_when: "'Invalid API token format' not in result.provisioning_log[0]"
+
+    - name: Provision refuses a node given neither a console password nor console_login false
+      runonflux.arcane_mage.provision:
+        api_url: https://proxmox.invalid:8006
+        api_token: not-a-token
+        node: pve1
+        vm_name: smoke
+        node_tier: cumulus
+        network: vmbr0
+        iso_name: FluxLive-1775071308.iso
+        hostname: smoke
+        flux_id: "1111111111111111111111111111111111"
+        identity_key: "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK"
+        tx_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        output_id: 0
+      register: no_console
+      failed_when: "'console_password' not in no_console.msg"
+
+    - name: Provision takes a node with no console login
+      runonflux.arcane_mage.provision:
+        api_url: https://proxmox.invalid:8006
+        api_token: not-a-token
+        node: pve1
+        vm_name: smoke
+        node_tier: cumulus
+        network: vmbr0
+        iso_name: FluxLive-1775071308.iso
+        hostname: smoke
+        console_login: false
+        flux_id: "1111111111111111111111111111111111"
+        identity_key: "KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK"
+        tx_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        output_id: 0
+      register: no_login
+      failed_when: "'Invalid API token format' not in no_login.provisioning_log[0]"

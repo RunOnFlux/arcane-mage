@@ -23,7 +23,6 @@ def identity_dict() -> dict:
 def system_dict() -> dict:
     return {
         "hostname": "test-node",
-        "hashed_console": "!",
     }
 
 

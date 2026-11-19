@@ -104,9 +104,17 @@ options:
     type: str
   console_password:
     description: >
-      Password for the console user. Will be hashed with Yescrypt.
-      If omitted, console login is disabled (SSH key only).
+      Password for the console login (the node's console shell and its text console):
+      at least 12 characters, no character more than 3 times in a row. Hashed with
+      Yescrypt. Required unless O(console_login=false). It cannot be set after the
+      install.
     type: str
+  console_login:
+    description: >
+      Whether the node has a console login. V(false) installs a node with none, for
+      good: it is then managed over SSH alone, and takes no O(console_password).
+    type: bool
+    default: true
   ssh_pubkey:
     description: >
       SSH public key (OpenSSH format), an operate key. ISOs from before tiered
@@ -223,7 +231,7 @@ options:
         type: str
 requirements:
   - "python >= 3.13"
-  - "arcane-mage >= 6.1.0"
+  - "arcane-mage >= 6.2.0"
 author:
   - RunOnFlux (@RunOnFlux)
 """
@@ -287,10 +295,31 @@ EXAMPLES = r"""
     network: vmbr0
     iso_name: "{{ flux_iso }}"
     hostname: flux-cumulus-01
+    console_password: "{{ console_password }}"
     flux_id: "{{ flux_id }}"
     identity_key: "{{ identity_key }}"
     tx_id: "{{ tx_id }}"
     output_id: 0
+  delegate_to: localhost
+
+- name: Provision a node with no console login (managed over SSH alone)
+  runonflux.arcane_mage.provision:
+    api_url: "https://192.168.1.100:8006"
+    api_token: "{{ proxmox_token }}"
+    node: pve1
+    vm_name: flux-cumulus-02
+    node_tier: cumulus
+    network: vmbr0
+    iso_name: "{{ flux_iso }}"
+    hostname: flux-cumulus-02
+    console_login: false
+    ssh_keys:
+      operate:
+        - "ssh-ed25519 AAAAC3... operator@laptop"
+    flux_id: "{{ flux_id }}"
+    identity_key: "{{ identity_key }}"
+    tx_id: "{{ tx_id }}"
+    output_id: 1
   delegate_to: localhost
 """
 
@@ -319,6 +348,7 @@ from ansible_collections.runonflux.arcane_mage.plugins.module_utils.library impo
 
 try:
     from arcane_mage import ArcaneOsConfig, HashedPassword, Provisioner, ProxmoxApi
+    from arcane_mage.password import password_problem
 
     IMPORT_ERROR = None
 except ImportError:
@@ -445,10 +475,9 @@ async def run_provision(params):
 
     config_dict = build_config_dict(params)
 
-    # Hash the console password if provided
-    if params.get("console_password"):
-        hp = HashedPassword(password=params["console_password"])
-        config_dict["system"]["hashed_console"] = hp.hash()
+    config_dict["system"]["console_login"] = params["console_login"]
+    if params["console_login"]:
+        config_dict["system"]["hashed_console"] = HashedPassword(password=params["console_password"]).hash()
 
     try:
         config = ArcaneOsConfig.from_dict(config_dict)
@@ -501,6 +530,7 @@ def main():
         force_standalone=dict(type="bool", default=False),
         hostname=dict(type="str", required=True),
         console_password=dict(type="str", no_log=True),
+        console_login=dict(type="bool", default=True),
         ssh_pubkey=dict(type="str"),
         ssh_keys=dict(
             type="dict",
@@ -540,11 +570,17 @@ def main():
         argument_spec=module_args,
         required_if=[
             ("ip_allocation", "static", ["ip_address", "gateway"]),
+            ("console_login", True, ["console_password"]),
         ],
         supports_check_mode=True,
     )
 
     require_arcane_mage(module, IMPORT_ERROR)
+
+    if not module.params["console_login"] and module.params.get("console_password"):
+        module.fail_json(msg="console_login is false and console_password is given: choose one.")
+    if module.params["console_login"] and (problem := password_problem(module.params["console_password"])):
+        module.fail_json(msg=f"console_password: {problem}")
 
     if module.check_mode:
         module.exit_json(

@@ -212,6 +212,33 @@ def tui(
     tui_app.run()
 
 
+def _give_console_password(nodes: list, interactive: bool) -> None:
+    """Every node with a console login and no password yet gets the one given for this run:
+    ARCANE_MAGE_CONSOLE_PASSWORD, or the answer to a prompt at a terminal."""
+    from .password import HashedPassword, password_problem
+
+    waiting = [node for node in nodes if node.system.console_login and node.system.hashed_console is None]
+    if not waiting:
+        return
+
+    password = os.environ.get("ARCANE_MAGE_CONSOLE_PASSWORD")
+    if password is None and interactive and sys.stdin.isatty():
+        password = typer.prompt("Console password", hide_input=True, confirmation_prompt=True)
+    if password is None:
+        names = ", ".join(node.system.hostname for node in waiting)
+        raise CliError(
+            f"No console password for {names}: set ARCANE_MAGE_CONSOLE_PASSWORD, or"
+            " console_login: false in the node's system section for a node with no console"
+            " login. It cannot be set after the install."
+        )
+    if problem := password_problem(password):
+        raise CliError(problem)
+
+    hashed = HashedPassword(password).hash()
+    for node in waiting:
+        node.system.hashed_console = hashed
+
+
 @app.command()
 def provision(
     url: str | None = typer.Option(None, help="Proxmox API URL (also accepts ARCANE_MAGE_URL)"),
@@ -245,6 +272,8 @@ def provision(
 
             if not nodes:
                 raise CliError(f"No nodes match filter '{node_filter}'")
+
+            _give_console_password(nodes, interactive=not use_json)
 
             results = []
             all_ok = True

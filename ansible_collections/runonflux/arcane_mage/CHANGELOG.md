@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0
+
+### Changed
+
+- Needs arcane-mage 6.2.0.
+- `provision` needs `console_password` or `console_login: false`: a node is given a console password or, on purpose, no console login. A task with neither fails before anything is created. The password follows the console's rule (12 characters, no character more than 3 times in a row).
+
 ## 2.2.0
 
 ### Changed

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from itertools import groupby
-
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import var
@@ -10,7 +8,7 @@ from textual.validation import ValidationResult, Validator
 from textual.widgets import Button, Input, Label, Markdown
 
 from ..models import ArcaneOsConfig
-from ..password import HashedPassword
+from ..password import MIN_PASSWORD_LENGTH, HashedPassword, password_problem
 
 
 class PasswordValidator(Validator):
@@ -24,31 +22,28 @@ class PasswordValidator(Validator):
             self.previous = value
             return self.success()
 
-        if len(value) < 12:
-            self.previous = value
-            return self.failure("Password must be a minimum of 12 characters.")
-
-        groups = groupby(value)
-        consecutives = [letter for letter, group in groups if len(list(group)) > 3]
-        if any(consecutives):
-            self.previous = value
-            return self.failure("Only 3 consecutive repeat characters allowed.")
-
         self.previous = value
-        return self.success()
+        problem = password_problem(value)
+        return self.failure(problem) if problem else self.success()
 
 
 class ProvisionNodeScreen(ModalScreen[ArcaneOsConfig | None]):
     password_valid = var(False)
 
-    def __init__(self, fluxnode: ArcaneOsConfig, all: bool = False) -> None:
+    def __init__(self, fluxnode: ArcaneOsConfig, all: bool = False, needs_password: bool | None = None) -> None:
+        """needs_password: whether a node this screen provisions takes a console password
+        (by default, whether `fluxnode` has a console login)."""
         super().__init__()
 
         self.fluxnode = fluxnode
         self.all = all
+        self.needs_password = fluxnode.system.console_login if needs_password is None else needs_password
+        # the password given, hashed: for every node of this provisioning that has a console login
+        self.hashed_password: str | None = None
 
     def on_screen_resume(self) -> None:
-        self.query_one(Input).focus()
+        if self.needs_password:
+            self.query_one(Input).focus()
 
     def compose(self) -> ComposeResult:
         hyper = self.fluxnode.hypervisor
@@ -77,30 +72,36 @@ The following will occur:
 * Wait an optional delay (in seconds) between each Fluxnode start"""
 
         dialog = all_dialog if self.all else single_dialog
+        if not self.needs_password:
+            dialog = dialog.replace("Add console password and click", "Click", 1)
+            dialog += "\n\nNo console login is configured (`console_login: false`): no password is asked for."
 
         with container:
             yield Markdown(dialog)
-            with Horizontal(id="console-container"):
-                yield Label("Console Pass:", classes="text-label")
-                yield Input(
-                    placeholder="Enter Console Password",
-                    password=True,
-                    validators=[PasswordValidator()],
-                )
+            if self.needs_password:
+                with Horizontal(id="console-container"):
+                    yield Label("Console Pass:", classes="text-label")
+                    yield Input(
+                        placeholder="Enter Console Password",
+                        password=True,
+                        validators=[PasswordValidator()],
+                    )
             yield error_label
             with Horizontal(id="button-container"):
                 yield Button("Cancel", id="cancel")
-                yield Button("Reveal", id="reveal")
-                yield Button("Provision", id="provision", disabled=True)
+                if self.needs_password:
+                    yield Button("Reveal", id="reveal")
+                yield Button("Provision", id="provision", disabled=self.needs_password)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        input = self.query_one(Input)
-
         if event.button.id == "provision":
-            hasher = HashedPassword(input.value)
-            self.fluxnode.system.hashed_console = hasher.hash()  # thread?
+            if self.needs_password:
+                self.hashed_password = HashedPassword(self.query_one(Input).value).hash()  # thread?
+            if self.fluxnode.system.console_login:
+                self.fluxnode.system.hashed_console = self.hashed_password
             self.dismiss(self.fluxnode)
         elif event.button.id == "reveal":
+            input = self.query_one(Input)
             input.password = not input.password
             event.button.label = "Reveal" if input.password else "Hide"
         else:
@@ -117,6 +118,6 @@ The following will occur:
         msg = "\n".join(result.failure_descriptions) if result and display else ""
         label.update(msg)
 
-        provision_disabled = display or len(event.input.value) < 12
+        provision_disabled = display or len(event.input.value) < MIN_PASSWORD_LENGTH
 
         self.query_one("#provision", Button).disabled = provision_disabled

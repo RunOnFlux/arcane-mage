@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.2.0
+
+### Changed
+
+- **A node's console login is a choice made at provisioning.** A node is provisioned with a console password or, on purpose, with none (`system.console_login: false`); the password cannot be set after the install. `Provisioner.provision_node` refuses a node that has neither (`SystemConfig.console_problem` says why) before anything is created. The command line takes the password for a run from `ARCANE_MAGE_CONSOLE_PASSWORD` or a prompt at a terminal; the TUI asks for none when no node it provisions has a console login.
+- `SystemConfig.hashed_console` is `None` until a password is given, and a value that sets no password (a locked entry, an empty or malformed one) reads as `None`. A node with no console login is written for the installer as `console_login: false`, and with the locked entry an ISO from before `console_login` reads.
+- `arcane_mage.password.password_problem` is the console password's rule (12 characters, no character more than 3 times in a row), shared by the TUI, the command line and the Ansible collection.
+
 ## 6.1.0
 
 ### Changed

@@ -168,15 +168,16 @@ class ArcaneMage(App):
         if not provisionable_nodes.first:
             return
 
-        configured_node = await self.push_screen(
-            ProvisionNodeScreen(provisionable_nodes.first, all=True),
-            wait_for_dismiss=True,
+        needs_password = any(
+            node.system.console_login for node in (provisionable_nodes.first, *provisionable_nodes.rest)
         )
+        provision_screen = ProvisionNodeScreen(provisionable_nodes.first, all=True, needs_password=needs_password)
+        configured_node = await self.push_screen(provision_screen, wait_for_dismiss=True)
 
         if not configured_node:
             return
 
-        hashed_password = configured_node.system.hashed_console
+        hashed_password = provision_screen.hashed_password
 
         worker = await self.provision_node_callback(configured_node)
 
@@ -208,7 +209,8 @@ class ArcaneMage(App):
         # we leave the info screen to display on error, otherwise pop
         for fluxnode in provisionable_nodes.rest:
             needs_pop = True
-            fluxnode.system.hashed_console = hashed_password
+            if fluxnode.system.console_login:
+                fluxnode.system.hashed_console = hashed_password
 
             last = fluxnode == provisionable_nodes.last
 
