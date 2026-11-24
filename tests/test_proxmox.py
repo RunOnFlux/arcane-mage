@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from arcane_mage.proxmox import ApiFailure, ApiSuccess, ParsedToken, ParsedUserPass, ProxmoxApi, ResolvedConnection
+from arcane_mage.proxmox import (
+    MAX_UNANSWERED_POLLS,
+    ApiFailure,
+    ApiResponse,
+    ApiSuccess,
+    ParsedToken,
+    ParsedUserPass,
+    ProxmoxApi,
+    ResolvedConnection,
+    TaskOutcome,
+    TaskStatus,
+)
 
 
 class TestApiResponse:
@@ -232,6 +244,57 @@ class TestWaitForTask:
             outcome = await api.wait_for_task(UPID, "pve2")
 
         assert outcome.error == "task status unreadable (HTTP 500: Internal Server Error)"
+
+    @staticmethod
+    async def waited(polls: list[ApiResponse[TaskStatus]], max_wait_s: int = 30) -> tuple[TaskOutcome, int]:
+        """The outcome of a wait whose polls answer `polls` in turn, and how many were made."""
+        async with ProxmoxApi.from_token("https://pve2.local:8006", TOKEN) as api:
+            with (
+                patch.object(api, "get_task", AsyncMock(side_effect=polls)) as get_task,
+                patch("arcane_mage.proxmox.asyncio.sleep", AsyncMock()),
+            ):
+                outcome = await api.wait_for_task(UPID, "pve2", max_wait_s)
+
+        return outcome, get_task.await_count
+
+    RUNNING = ApiSuccess(payload=TaskStatus(status="running"))
+    STOPPED = ApiSuccess(payload=TaskStatus(status="stopped", exitstatus="OK"))
+    TIMED_OUT = ApiFailure(timed_out=True)
+
+    @pytest.mark.parametrize(
+        "missed",
+        [TIMED_OUT, ApiFailure(error="Connection Error"), ApiFailure(status=595, error="No route to host")],
+    )
+    async def test_an_unanswered_poll_is_polled_again(self, missed: ApiFailure):
+        outcome, polls = await self.waited([missed, self.RUNNING, missed, missed, self.STOPPED])
+
+        assert outcome
+        assert polls == 5
+
+    async def test_unanswered_polls_in_a_row_end_the_wait(self):
+        outcome, polls = await self.waited([self.RUNNING, *[self.TIMED_OUT] * (MAX_UNANSWERED_POLLS + 1)])
+
+        assert outcome.error == "task status unreadable (request timed out)"
+        assert polls == 1 + MAX_UNANSWERED_POLLS
+
+    async def test_an_answer_resets_the_count(self):
+        miss = [self.TIMED_OUT] * (MAX_UNANSWERED_POLLS - 1)
+        outcome, _ = await self.waited([*miss, self.RUNNING, *miss, self.STOPPED])
+
+        assert outcome
+
+    async def test_a_refused_poll_ends_the_wait_at_once(self):
+        outcome, polls = await self.waited([self.RUNNING, ApiFailure(status=401, error="No ticket"), self.STOPPED])
+
+        assert outcome.error == "task status unreadable (HTTP 401: No ticket)"
+        assert polls == 2
+
+    async def test_an_unanswered_poll_does_not_outlast_the_wait(self):
+        with patch("arcane_mage.proxmox.monotonic", side_effect=[0.0, 0.0, 31.0]):
+            outcome, polls = await self.waited([self.RUNNING, self.TIMED_OUT, self.STOPPED])
+
+        assert outcome.error == "task status unreadable (request timed out)"
+        assert polls == 2
 
 
 class TestVmPower:
