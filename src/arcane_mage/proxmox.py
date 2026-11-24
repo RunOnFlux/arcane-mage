@@ -211,6 +211,17 @@ class TaskStatus(TypedDict):
     exitstatus: NotRequired[str]
 
 
+# Unanswered polls in a row after which a task is given up on. A node busy with the task's
+# own I/O can miss a connect timeout and answer the next poll.
+MAX_UNANSWERED_POLLS = 5
+
+
+def _unanswered(failure: ApiFailure) -> bool:
+    """Whether a poll got no answer from the node: no response at all, or the Proxmox host that
+    took the request could not reach the node (pveproxy answers 595-599 for that)."""
+    return failure.status is None or 595 <= failure.status <= 599
+
+
 # A task-starting call answers with the task's UPID.
 _UPID = TypeAdapter(str)
 _NONE = TypeAdapter(type(None))
@@ -561,27 +572,38 @@ class ProxmoxApi:
         return res
 
     async def wait_for_task(self, task_id: str, node: str, max_wait_s: int = 10) -> TaskOutcome:
-        """Poll the task until it stops, for at most `max_wait_s` after the first answer."""
-        task_res = await self.get_task(task_id, node)
+        """Poll the task until it stops, for at most `max_wait_s` after the first answer.
 
-        if not task_res:
-            return TaskOutcome(error=f"task status unreadable ({task_res.reason})")
+        A poll nobody answered says nothing about the task, so the wait goes on until
+        `MAX_UNANSWERED_POLLS` in a row. A poll Proxmox refused ends it at once."""
+        start: float | None = None
+        unanswered = 0
 
-        task = task_res.payload
-        start = monotonic()
-
-        while task["status"] != "stopped" and monotonic() - start < max_wait_s:
-            await asyncio.sleep(1)
-
+        while True:
             task_res = await self.get_task(task_id, node)
 
-            if not task_res:
-                return TaskOutcome(error=f"task status unreadable ({task_res.reason})")
+            if task_res:
+                unanswered = 0
+                task = task_res.payload
 
-            task = task_res.payload
+                if task["status"] == "stopped":
+                    break
 
-        if task["status"] != "stopped":
-            return TaskOutcome(error=f"task still running after {max_wait_s}s")
+                if start is None:
+                    start = monotonic()
+
+                error = f"task still running after {max_wait_s}s"
+            else:
+                unanswered += 1
+                error = f"task status unreadable ({task_res.reason})"
+
+                if not _unanswered(task_res) or unanswered >= MAX_UNANSWERED_POLLS:
+                    return TaskOutcome(error=error)
+
+            if start is not None and monotonic() - start >= max_wait_s:
+                return TaskOutcome(error=error)
+
+            await asyncio.sleep(1)
 
         exit_status = task.get("exitstatus")
 

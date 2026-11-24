@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A task poll nobody answered does not fail the task**: `wait_for_task` keeps polling until 5 polls in a row got no answer (a timeout, a connection error, or pveproxy's 595-599), within `max_wait_s`. A teardown on a busy node is not reported failed while Proxmox finishes the delete. A poll Proxmox refuses still ends the wait at once.
+
 ## 6.2.0
 
 ### Changed
